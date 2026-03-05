@@ -74,7 +74,7 @@ export async function sendTeacherSessionEmail(sessionIds: string[]): Promise<{ s
             <th style="padding:8px 12px;text-align:left;font-weight:600;color:#6b7280;font-size:11px;text-transform:uppercase;">Zoom</th>
           </tr>
         </thead>
-        <tbody>${sessionTableRows(teacherSessions as Parameters<typeof sessionTableRows>[0])}</tbody>
+        <tbody>${sessionTableRows(teacherSessions as any)}</tbody>
       </table>
       <p style="margin:24px 0 0;font-size:12px;color:#9ca3af;">Sent by Acadgenius Tutorial Powerhouse.</p>
     </div>
