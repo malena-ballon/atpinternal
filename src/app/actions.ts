@@ -51,7 +51,8 @@ export async function sendTeacherSessionEmail(sessionIds: string[]): Promise<{ s
 
   let sent = 0
   for (const [, teacherSessions] of byTeacher) {
-    const teacher = (teacherSessions[0] as { teachers?: { name: string; email: string } | null }).teachers
+    const teacherData = (teacherSessions[0] as { teachers?: { name: string; email: string }[] | null }).teachers
+    const teacher = teacherData?.[0]
     if (!teacher?.email) continue
     const html = `
 <!DOCTYPE html><html><head><meta charset="utf-8"/></head>
