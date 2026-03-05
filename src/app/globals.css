@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-jakarta);
+  --font-mono: var(--font-jetbrains);
+
+  /* Brand / dark palette (used by auth pages) */
+  --color-navy:            #0A1045;
+  --color-navy-mid:        #121A5C;
+  --color-slate-brand:     #3A3F6E;
+  --color-brand-cyan:      #3DD4E6;
+  --color-brand-cyan-soft: #7BE3F0;
+  --color-brand-cyan-pale: #D0F5FA;
+
+  /* Light theme (dashboard) */
+  --color-bg:              #F5F7FA;
+  --color-surface:         #FFFFFF;
+  --color-border:          #E2E8F0;
+  --color-text-primary:    #1A1F36;
+  --color-text-secondary:  #64748B;
+  --color-text-muted:      #94A3B8;
+
+  /* Semantic */
+  --color-success: #22C55E;
+  --color-warning: #F59E0B;
+  --color-danger:  #EF4444;
+  --color-info:    #3B82F6;
+}
+
+body {
+  background: var(--color-navy);
+  color: #ffffff;
+  font-family: var(--font-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}

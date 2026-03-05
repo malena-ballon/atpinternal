@@ -1,0 +1,4 @@
+node_modules/
+.next/
+.Trash/
+.DS_Store
