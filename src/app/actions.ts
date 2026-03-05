@@ -84,7 +84,7 @@ export async function sendTeacherSessionEmail(sessionIds: string[]): Promise<{ s
       await resend.emails.send({
         from: FROM_EMAIL,
         to: teacher.email,
-        subject: `New Sessions Assigned – ${(teacherSessions[0] as { classes?: { name: string } | null }).classes?.name ?? 'ATP'}`,
+        subject: `New Sessions Assigned – ${(teacherSessions[0] as { classes?: { name: string }[] | null }).classes?.[0]?.name ?? 'ATP'}`,
         html,
       })
       sent++
