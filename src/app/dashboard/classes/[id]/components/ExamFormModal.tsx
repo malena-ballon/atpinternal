@@ -62,7 +62,12 @@ export default function ExamFormModal({ classId, classPassingPct, subjects, exam
 
     setLoading(false)
     if (err) { setError(err.message); return }
-    onSaved(data as ExamRow)
+    const formattedData = {
+      ...data,
+      subjects: Array.isArray(data.subjects) ? data.subjects[0] : data.subjects
+    }
+
+    onSaved(formattedData as unknown as ExamRow)
   }
 
   return (
