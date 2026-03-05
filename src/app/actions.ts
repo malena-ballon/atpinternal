@@ -185,7 +185,7 @@ export async function emailStudentReport(
         totalStudents: totalStudents ?? 0,
         totalExams: sortedExams.length,
         classPassingPct,
-      })
+      } as any) as any
     )
 
     const today = new Date().toISOString().slice(0, 10)
