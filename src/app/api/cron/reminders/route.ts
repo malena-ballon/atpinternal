@@ -124,7 +124,7 @@ export async function GET(req: NextRequest) {
   const byTeacher = new Map<string, SessionWithJoins[]>()
   const sentIds: string[] = []
 
-  for (const s of sessions as SessionWithJoins[]) {
+  for (const s of sessions as any[]) {
     if (!s.teacher_id || !s.teachers?.email) continue
     if (!byTeacher.has(s.teacher_id)) byTeacher.set(s.teacher_id, [])
     byTeacher.get(s.teacher_id)!.push(s)
