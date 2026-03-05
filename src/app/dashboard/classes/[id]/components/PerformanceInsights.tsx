@@ -102,7 +102,7 @@ export default function PerformanceInsights({ className, classId, exams, classSt
     createClient().from('scores')
       .select('id, exam_id, student_id, raw_score, total_items, percentage, created_at, students(name, email)')
       .in('exam_id', exams.map(e => e.id))
-      .then(({ data }) => { setAllScores((data ?? []) as ScoreRow[]); setLoading(false) })
+      .then(({ data }) => { setAllScores((data ?? []) as unknown as ScoreRow[]); setLoading(false) })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exams])
 

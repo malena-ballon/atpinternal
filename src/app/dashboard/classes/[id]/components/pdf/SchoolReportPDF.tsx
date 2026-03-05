@@ -1,5 +1,6 @@
 import { Document, Page, View, Text, StyleSheet } from '@react-pdf/renderer'
-import type { SchoolStats, ExamRow } from '../PerformanceInsights'
+import type { SchoolStats } from '../PerformanceInsights'
+import type { ExamRow } from '@/types'
 
 const C = { cyan: '#0BB5C7', dark: '#111827', mid: '#374151', muted: '#6B7280', border: '#E5E7EB', altRow: '#F9FAFB', success: '#16A34A' }
 
@@ -63,7 +64,7 @@ export default function SchoolReportPDF({ className, schoolStats, sortedExams }:
         <Text style={s.sectionTitle}>Average Score by School</Text>
         {schoolStats.map((school, i) => (
           <View key={school.school} style={s.barRow}>
-            <Text style={s.barLabel} numberOfLines={1}>{school.school}</Text>
+            <Text style={s.barLabel}>{school.school}</Text>
             <View style={s.barTrack}>
               <View style={{ width: `${Math.min(school.avgPct, 100)}%`, height: 10, backgroundColor: COLORS[i % COLORS.length], borderRadius: 4 }} />
             </View>
@@ -79,13 +80,13 @@ export default function SchoolReportPDF({ className, schoolStats, sortedExams }:
             <View style={[s.tableHeader, { flexWrap: 'nowrap' }]}>
               <Text style={[s.th, { flex: 2 }]}>School</Text>
               {sortedExams.slice(0, 6).map(e => (
-                <Text key={e.id} style={[s.th, { flex: 1, textAlign: 'right' }]} numberOfLines={1}>{e.name.slice(0, 8)}</Text>
+                <Text key={e.id} style={[s.th, { flex: 1, textAlign: 'right' }]}>{e.name.slice(0, 8)}</Text>
               ))}
               <Text style={[s.th, { flex: 0.8, textAlign: 'right' }]}>Avg</Text>
             </View>
             {schoolStats.map((school, i) => (
               <View key={school.school} style={i % 2 === 1 ? s.tableRowAlt : s.tableRow}>
-                <Text style={[s.td, { flex: 2, fontFamily: 'Helvetica-Bold', color: C.dark }]} numberOfLines={1}>{school.school}</Text>
+                <Text style={[s.td, { flex: 2, fontFamily: 'Helvetica-Bold', color: C.dark }]}>{school.school}</Text>
                 {sortedExams.slice(0, 6).map((e, ei) => {
                   const avg = school.examTrend[ei]?.avg ?? 0
                   return (

@@ -137,7 +137,7 @@ export default function PerExamTab({ className, examStats, classPassingPct }: Pr
                     <YAxis tick={{ fontSize: 10, fill: 'var(--color-text-muted)' }} tickLine={false} axisLine={false} allowDecimals={false} />
                     <Tooltip
                       contentStyle={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 8, fontSize: 12 }}
-                      formatter={(v: number) => [v, 'Students']}
+                      formatter={(v: number | undefined) => [v ?? 0, 'Students']}
                     />
                     <Bar dataKey="count" radius={[4, 4, 0, 0]}>
                       {stats.distribution.map((_, i) => <Cell key={i} fill={DIST_COLORS[i] ?? '#0BB5C7'} />)}

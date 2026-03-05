@@ -89,12 +89,12 @@ export default function StudentReportPDF({ className, stats, totalStudents, tota
           <View style={s.infoCard}>
             <Text style={s.infoCardLabel}>Highest Score</Text>
             <Text style={[s.infoCardValue, { color: C.success }]}>{stats.highest?.pct.toFixed(1) ?? '—'}%</Text>
-            {stats.highest && <Text style={s.infoCardSub} numberOfLines={1}>{stats.highest.exam.name}</Text>}
+            {stats.highest && <Text style={s.infoCardSub}>{stats.highest.exam.name}</Text>}
           </View>
           <View style={[s.infoCard, { marginRight: 0 }]}>
             <Text style={s.infoCardLabel}>Lowest Score</Text>
             <Text style={[s.infoCardValue, { color: C.danger }]}>{stats.lowest?.pct.toFixed(1) ?? '—'}%</Text>
-            {stats.lowest && <Text style={s.infoCardSub} numberOfLines={1}>{stats.lowest.exam.name}</Text>}
+            {stats.lowest && <Text style={s.infoCardSub}>{stats.lowest.exam.name}</Text>}
           </View>
         </View>
 
@@ -106,7 +106,7 @@ export default function StudentReportPDF({ className, stats, totalStudents, tota
               const passes = sc.percentage >= (sc.exam.passing_pct_override ?? classPassingPct)
               return (
                 <View key={sc.id} style={s.barRow}>
-                  <Text style={s.barLabel} numberOfLines={1}>{sc.exam.name}</Text>
+                  <Text style={s.barLabel}>{sc.exam.name}</Text>
                   <View style={s.barTrack}>
                     <View style={{ width: `${Math.min(sc.percentage, 100)}%`, height: 8, backgroundColor: passes ? C.success : C.danger, borderRadius: 4 }} />
                   </View>
@@ -131,7 +131,7 @@ export default function StudentReportPDF({ className, stats, totalStudents, tota
               const passes = sc.percentage >= effectivePassing
               return (
                 <View key={sc.id} style={i % 2 === 1 ? s.tableRowAlt : s.tableRow}>
-                  <Text style={[s.td, { flex: 2.5, fontFamily: 'Helvetica-Bold', color: C.dark }]} numberOfLines={1}>{sc.exam.name}</Text>
+                  <Text style={[s.td, { flex: 2.5, fontFamily: 'Helvetica-Bold', color: C.dark }]}>{sc.exam.name}</Text>
                   <Text style={[s.td, { flex: 1.5, color: C.muted }]}>{sc.exam.subjects?.name ?? '—'}</Text>
                   <Text style={[s.td, { flex: 1 }]}>{sc.raw_score} / {sc.total_items}</Text>
                   <Text style={[s.td, { flex: 0.8, fontFamily: 'Helvetica-Bold' }]}>{sc.percentage.toFixed(1)}%</Text>

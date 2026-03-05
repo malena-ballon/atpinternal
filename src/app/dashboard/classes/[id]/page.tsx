@@ -49,7 +49,7 @@ export default async function ClassDetailPage({ params }: { params: Promise<{ id
   if (!cls) notFound()
 
   const students: StudentRow[] = (classStudentsData ?? []).map(cs => ({
-    ...(cs.students as StudentRow),
+    ...(cs.students as unknown as StudentRow),
     enrolled_at: cs.enrolled_at,
   }))
 
@@ -139,7 +139,7 @@ export default async function ClassDetailPage({ params }: { params: Promise<{ id
           <ExamsManager
             classId={cls.id}
             classPassingPct={cls.default_passing_pct}
-            initialExams={(examsData ?? []) as ExamRow[]}
+            initialExams={(examsData ?? []) as unknown as ExamRow[]}
             subjects={(subjects ?? []) as SubjectRow[]}
             classStudents={students}
           />
@@ -151,7 +151,7 @@ export default async function ClassDetailPage({ params }: { params: Promise<{ id
         <PerformanceInsights
           className={cls.name}
           classId={cls.id}
-          exams={(examsData ?? []) as ExamRow[]}
+          exams={(examsData ?? []) as unknown as ExamRow[]}
           classStudents={students}
           classPassingPct={cls.default_passing_pct}
           atRiskThreshold={cls.at_risk_threshold}
@@ -163,7 +163,7 @@ export default async function ClassDetailPage({ params }: { params: Promise<{ id
       <Section title="Sessions">
         <SessionsSpreadsheet
           classId={cls.id}
-          initialSessions={(sessionsData ?? []) as SessionRow[]}
+          initialSessions={(sessionsData ?? []) as unknown as SessionRow[]}
           subjects={(subjects ?? []) as SubjectRow[]}
           teachers={(teachersData ?? []) as TeacherRow[]}
           initialStudentCount={(sessionsData ?? [])[0]?.student_count ?? 0}

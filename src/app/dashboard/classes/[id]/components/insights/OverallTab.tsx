@@ -100,7 +100,7 @@ export default function OverallTab({ className, classOverTime, studentStats, cla
                 <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: 'var(--color-text-muted)' }} tickLine={false} axisLine={false} />
                 <Tooltip
                   contentStyle={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 8, fontSize: 12 }}
-                  formatter={(v: number) => [`${v}%`, 'Avg']}
+                  formatter={(v: number | undefined) => [`${v ?? 0}%`, 'Avg']}
                 />
                 <Line type="monotone" dataKey="avg" stroke={CYAN} strokeWidth={2} dot={{ r: 3, fill: CYAN }} activeDot={{ r: 5 }} />
               </LineChart>
@@ -121,7 +121,7 @@ export default function OverallTab({ className, classOverTime, studentStats, cla
                   <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 10, fill: 'var(--color-text-muted)' }} tickLine={false} axisLine={false} />
                   <Tooltip
                     contentStyle={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 8, fontSize: 12 }}
-                    formatter={(v: number) => [`${v}%`, 'Avg']}
+                    formatter={(v: number | undefined) => [`${v ?? 0}%`, 'Avg']}
                   />
                   <Bar dataKey="avg" radius={[0, 4, 4, 0]}>
                     {subjectData.map((_, i) => <Cell key={i} fill={CYAN} fillOpacity={0.75 + (i === 0 ? 0.25 : 0)} />)}

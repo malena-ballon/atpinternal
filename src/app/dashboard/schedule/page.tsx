@@ -43,7 +43,7 @@ function ScheduleContent() {
       supabase.from('classes').select('id, name, status, zoom_link, description, default_passing_pct, created_at, updated_at').eq('status', 'active'),
       supabase.from('teachers').select('id, user_id, name, specialization, email, availability'),
     ]).then(([{ data: s }, { data: c }, { data: t }]) => {
-      setSessions((s ?? []) as SessionRow[])
+      setSessions((s ?? []) as unknown as SessionRow[])
       setClasses((c ?? []) as ClassRow[])
       setTeachers((t ?? []) as TeacherRow[])
       setLoading(false)

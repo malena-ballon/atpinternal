@@ -17,7 +17,7 @@ export default function SubjectsManager({ classId, initialSubjects }: Props) {
   const [removingId, setRemovingId] = useState<string | null>(null)
   const [suggestions, setSuggestions] = useState<string[]>([])
   const [showSuggestions, setShowSuggestions] = useState(false)
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   async function handleAdd() {
     const name = newName.trim()

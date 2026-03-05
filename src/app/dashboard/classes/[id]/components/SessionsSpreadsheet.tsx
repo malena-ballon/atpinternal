@@ -403,7 +403,7 @@ export default function SessionsSpreadsheet({ classId, initialSessions, subjects
       const { data: fresh } = await supabase.from('sessions')
         .select('id, date, start_time, end_time, status, student_count, zoom_link, notes, class_id, subject_id, teacher_id, subjects(name), teachers(name), classes(name)')
         .eq('class_id', classId).order('date').order('start_time')
-      if (fresh) setRows((fresh as SessionRow[]).map(sessionToRow))
+      if (fresh) setRows((fresh as unknown as SessionRow[]).map(sessionToRow))
       setDeletedIds(new Set())
       setSaved(true); setTimeout(() => setSaved(false), 2500)
       setEditMode(false)
@@ -530,7 +530,7 @@ export default function SessionsSpreadsheet({ classId, initialSessions, subjects
                             style={{ position:'absolute', opacity:0, width:'1px', height:'1px', pointerEvents:'none' }} tabIndex={-1} />
                           <CalendarDays size={13} style={{ color:'var(--color-text-muted)', display:'block' }}
                             onClick={e => {
-                              const inp = (e.currentTarget as HTMLElement).closest('label')?.querySelector('input[type="date"]') as HTMLInputElement|null
+                              const inp = (e.currentTarget as unknown as HTMLElement).closest('label')?.querySelector('input[type="date"]') as HTMLInputElement|null
                               inp?.showPicker?.()
                             }} />
                         </label>
@@ -564,10 +564,10 @@ export default function SessionsSpreadsheet({ classId, initialSessions, subjects
                           {teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                         </select>
                         {checkAvailConflict(teachers.find(t => t.id === row.teacher_id), row.date, row.start_time) && (
-                          <AlertTriangle size={13} style={{ color:'#D97706', flexShrink:0 }} title="Outside teacher's availability" />
+                          <span title="Outside teacher's availability" style={{ flexShrink:0, lineHeight:0 }}><AlertTriangle size={13} style={{ color:'#D97706' }} /></span>
                         )}
                         {rowHasScheduleConflict(i) && (
-                          <AlertTriangle size={13} style={{ color:'var(--color-danger)', flexShrink:0 }} title="Teacher already has an overlapping session" />
+                          <span title="Teacher already has an overlapping session" style={{ flexShrink:0, lineHeight:0 }}><AlertTriangle size={13} style={{ color:'var(--color-danger)' }} /></span>
                         )}
                       </div>
                     </td>

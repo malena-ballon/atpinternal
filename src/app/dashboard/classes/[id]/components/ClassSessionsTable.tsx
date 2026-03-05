@@ -42,6 +42,8 @@ export default function ClassSessionsTable({
     rate: null,
     created_at: '',
     updated_at: '',
+    at_risk_threshold: 0,
+    score_brackets: [],
   }
 
   async function handleCancel(id: string) {

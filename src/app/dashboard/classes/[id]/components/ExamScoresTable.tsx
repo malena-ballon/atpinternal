@@ -29,7 +29,7 @@ export default function ExamScoresTable({ exam, classPassingPct, externalScores 
       .select('id, exam_id, student_id, raw_score, total_items, percentage, created_at, students(name, email)')
       .eq('exam_id', exam.id)
       .then(({ data }) => {
-        setScores((data ?? []) as ScoreRow[])
+        setScores((data ?? []) as unknown as ScoreRow[])
         setLoading(false)
       })
   // eslint-disable-next-line react-hooks/exhaustive-deps

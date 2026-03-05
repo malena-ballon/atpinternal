@@ -135,7 +135,7 @@ export default function PerStudentTab({ className, studentStats, totalExams, tot
                     <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: 'var(--color-text-muted)' }} tickLine={false} axisLine={false} />
                     <Tooltip
                       contentStyle={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 8, fontSize: 12 }}
-                      formatter={(v: number) => [`${v}%`, 'Score']}
+                      formatter={(v: number | undefined) => [`${v ?? 0}%`, 'Score']}
                     />
                     <Line type="monotone" dataKey="pct" stroke="#0BB5C7" strokeWidth={2} dot={{ r: 3, fill: '#0BB5C7' }} activeDot={{ r: 5 }} />
                   </LineChart>

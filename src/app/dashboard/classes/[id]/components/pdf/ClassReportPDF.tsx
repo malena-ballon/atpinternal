@@ -45,7 +45,7 @@ const s = StyleSheet.create({
 function Bar({ name, pct, color = C.cyan }: { name: string; pct: number; color?: string }) {
   return (
     <View style={s.barRow}>
-      <Text style={s.barLabel} numberOfLines={1}>{name}</Text>
+      <Text style={s.barLabel}>{name}</Text>
       <View style={s.barTrack}>
         <View style={{ width: `${Math.min(Math.max(pct, 0), 100)}%`, height: 8, backgroundColor: color, borderRadius: 4 }} />
       </View>

@@ -1,7 +1,8 @@
 'use client'
 
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Legend } from 'recharts'
-import type { SchoolStats, ExamRow } from '../PerformanceInsights'
+import type { SchoolStats } from '../PerformanceInsights'
+import type { ExamRow } from '@/types'
 import ExportButton, { downloadBlob, pdfFileName } from '../pdf/ExportButton'
 import CopyableTable from '@/app/dashboard/components/CopyableTable'
 
@@ -74,7 +75,7 @@ export default function PerSchoolTab({ className, schoolStats, sortedExams }: Pr
               <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 10, fill: 'var(--color-text-muted)' }} tickLine={false} axisLine={false} />
               <Tooltip
                 contentStyle={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 8, fontSize: 12 }}
-                formatter={(v: number, _name, payload) => [`${v}% avg (${payload.payload.count} students)`, '']}
+                formatter={(v: number | undefined, _name, payload) => [`${v ?? 0}% avg (${payload.payload.count} students)`, '']}
               />
               <Bar dataKey="avg" radius={[0, 4, 4, 0]}>
                 {schoolBarData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
@@ -96,7 +97,7 @@ export default function PerSchoolTab({ className, schoolStats, sortedExams }: Pr
                 <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: 'var(--color-text-muted)' }} tickLine={false} axisLine={false} />
                 <Tooltip
                   contentStyle={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 8, fontSize: 12 }}
-                  formatter={(v: number, name: string) => [`${v}%`, name]}
+                  formatter={(v: number | undefined, name: string | undefined) => [`${v ?? 0}%`, name ?? '']}
                 />
                 <Legend wrapperStyle={{ fontSize: 11, color: 'var(--color-text-muted)' }} />
                 {schoolStats.map((s, i) => (

@@ -99,7 +99,7 @@ export default async function PublicSchedulePage({ params }: { params: Promise<{
               <tbody>
                 {sessions.map((s, i) => {
                   const cfg = STATUS_LABEL[s.status] ?? STATUS_LABEL.scheduled
-                  const subject = (s.subjects as { name: string } | null)
+                  const subject = (s.subjects as unknown as { name: string } | null)
                   return (
                     <tr
                       key={s.id}
