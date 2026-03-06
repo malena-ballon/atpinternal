@@ -158,7 +158,7 @@ export default function PerSubjectTab({ examStats, studentStats, classPassingPct
                     <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="var(--color-border)" />
                     <YAxis domain={[0, 100]} tickFormatter={v => `${v}%`} tick={{ fontSize: 10 }} stroke="var(--color-border)" />
                     <Tooltip
-                      formatter={(v: number) => [`${v}%`, 'Pass Rate']}
+                      formatter={(v: any) => [`${v}%`, 'Pass Rate']}
                       labelFormatter={(_, p) => p[0]?.payload?.fullName ?? ''}
                       contentStyle={{ borderRadius: 8, border: '1px solid var(--color-border)', fontSize: 12 }}
                     />
