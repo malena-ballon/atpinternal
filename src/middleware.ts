@@ -82,6 +82,12 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|login|register|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    /*
+     * Match all request paths except for:
+     * - _next/static, _next/image, favicon.ico
+     * - login, register, pending (THIS IS THE FIX)
+     * - all images (svg, png, etc.)
+     */
+    '/((?!_next/static|_next/image|favicon.ico|login|register|pending|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }
