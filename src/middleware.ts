@@ -7,7 +7,6 @@ const PUBLIC_PATHS = ['/login', '/register', '/auth', '/schedule']
 const SEMI_PUBLIC_PATHS = ['/pending']
 
 function redirectTo(request: NextRequest, pathname: string) {
-  // This creates a fresh, clean URL based on your current domain
   return NextResponse.redirect(new URL(pathname, request.url))
 }
 
@@ -41,8 +40,9 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser()
 
   const { pathname } = request.nextUrl
-  const isPublic = PUBLIC_PATHS.some(p => pathname.startsWith(p))
-  const isSemiPublic = SEMI_PUBLIC_PATHS.some(p => pathname.startsWith(p))
+// Replace your .some(p => pathname.startsWith(p)) with this:
+  const isPublic = PUBLIC_PATHS.includes(pathname)
+  const isSemiPublic = SEMI_PUBLIC_PATHS.includes(pathname)
 
   // ── No session ──────────────────────────────────────────────
   if (!user) {
