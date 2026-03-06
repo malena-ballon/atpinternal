@@ -23,5 +23,5 @@ export default async function NotebookPage() {
     .order('is_pinned', { ascending: false })
     .order('updated_at', { ascending: false })
 
-  return <NotebookClient initialNotes={(notes ?? []) as unknown as NoteRow[]} />
+  return <NotebookClient userId={user?.id as string} initialNotes={(notes ?? []) as unknown as NoteRow[]} />
 }
