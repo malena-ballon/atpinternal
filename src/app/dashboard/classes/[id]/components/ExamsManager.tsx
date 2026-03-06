@@ -10,13 +10,14 @@ import ExamScoresTable from './ExamScoresTable'
 interface Props {
   classId: string
   classPassingPct: number
-  initialExams: ExamRow[]
+  exams: ExamRow[]
   subjects: SubjectRow[]
   classStudents: StudentRow[]
+  onExamSaved: (exam: ExamRow) => void
+  onExamTotalItemsUpdate: (examId: string, totalItems: number) => void
 }
 
-export default function ExamsManager({ classId, classPassingPct, initialExams, subjects, classStudents }: Props) {
-  const [exams, setExams] = useState<ExamRow[]>(initialExams)
+export default function ExamsManager({ classId, classPassingPct, exams, subjects, classStudents, onExamSaved, onExamTotalItemsUpdate }: Props) {
   const [showFormModal, setShowFormModal] = useState(false)
   const [editTarget, setEditTarget] = useState<ExamRow | null>(null)
   const [scoreModalExam, setScoreModalExam] = useState<ExamRow | null>(null)
@@ -25,20 +26,15 @@ export default function ExamsManager({ classId, classPassingPct, initialExams, s
 
   function handleExamSaved(saved: ExamRow) {
     const isNew = !exams.find(e => e.id === saved.id)
-    if (isNew) {
-      setExams(prev => [saved, ...prev])
-      setShowFormModal(false)
-      setScoreModalExam(saved)
-    } else {
-      setExams(prev => prev.map(e => e.id === saved.id ? saved : e))
-      setShowFormModal(false)
-      setEditTarget(null)
-    }
+    onExamSaved(saved)
+    setShowFormModal(false)
+    setEditTarget(null)
+    if (isNew) setScoreModalExam(saved)
   }
 
   function handleScoresImported(examId: string, scores: ScoreRow[], detectedTotalItems: number) {
     setImportedScores(prev => ({ ...prev, [examId]: scores }))
-    setExams(prev => prev.map(e => e.id === examId ? { ...e, total_items: detectedTotalItems } : e))
+    onExamTotalItemsUpdate(examId, detectedTotalItems)
     setScoreModalExam(null)
     setExpandedExamId(examId)
   }
@@ -192,6 +188,7 @@ export default function ExamsManager({ classId, classPassingPct, initialExams, s
           classId={classId}
           classStudents={classStudents}
           classPassingPct={classPassingPct}
+          subjects={subjects.filter(s => s.name.toLowerCase() !== 'assessment')}
           onClose={() => setScoreModalExam(null)}
           onImported={(scores, totalItems) => handleScoresImported(scoreModalExam.id, scores, totalItems)}
         />

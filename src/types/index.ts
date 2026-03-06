@@ -85,6 +85,7 @@ export interface ExamRow {
   id: string
   class_id: string
   subject_id: string | null
+  subject_ids: string[] | null
   name: string
   date: string | null
   total_items: number

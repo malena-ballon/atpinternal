@@ -1,18 +1,27 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus, Search, Pencil, Trash2, X } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Plus, Search, Pencil, Trash2, X, Check, UserX, Users, UserCheck, Clock } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 import type { TeacherRow } from '@/types'
-import type { TeacherWithStats } from '../page'
+import type { TeacherWithStats, PendingUser } from '../page'
 import TeacherFormModal from './TeacherFormModal'
+import { approveUser, rejectUser } from '@/app/actions'
 
 const DAY_ABBR: Record<string, string> = {
   Monday: 'Mon', Tuesday: 'Tue', Wednesday: 'Wed',
   Thursday: 'Thu', Friday: 'Fri', Saturday: 'Sat', Sunday: 'Sun',
 }
-
 const DAYS_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+
+type Tab = 'teachers' | 'pending' | 'invited'
+
+interface Props {
+  activeTeachers: TeacherWithStats[]
+  pendingUsers: PendingUser[]
+  invitedTeachers: TeacherWithStats[]
+}
 
 function Initials({ name }: { name: string }) {
   const parts = name.trim().split(/\s+/)
@@ -20,10 +29,8 @@ function Initials({ name }: { name: string }) {
     ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
     : name.slice(0, 2).toUpperCase()
   return (
-    <div
-      className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0"
-      style={{ backgroundColor: 'rgba(11,181,199,0.12)', color: '#0BB5C7' }}
-    >
+    <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0"
+      style={{ backgroundColor: 'rgba(11,181,199,0.12)', color: '#0BB5C7' }}>
       {text}
     </div>
   )
@@ -39,12 +46,9 @@ function AvailabilityTags({ teacher }: { teacher: TeacherRow }) {
   return (
     <div className="flex flex-wrap gap-1">
       {sorted.map((e, i) => (
-        <span
-          key={`${e.day}-${i}`}
-          className="text-xs px-1.5 py-0.5 rounded-md font-medium"
+        <span key={`${e.day}-${i}`} className="text-xs px-1.5 py-0.5 rounded-md font-medium"
           style={{ backgroundColor: 'rgba(11,181,199,0.08)', color: '#0BB5C7' }}
-          title={`${e.start} – ${e.end}`}
-        >
+          title={`${e.start} – ${e.end}`}>
           {DAY_ABBR[e.day] ?? e.day}
         </span>
       ))}
@@ -52,15 +56,22 @@ function AvailabilityTags({ teacher }: { teacher: TeacherRow }) {
   )
 }
 
-export default function TeachersTable({ initialTeachers }: { initialTeachers: TeacherWithStats[] }) {
-  const [teachers, setTeachers] = useState(initialTeachers)
+export default function TeachersTable({ activeTeachers, pendingUsers, invitedTeachers }: Props) {
+  const router = useRouter()
+  const [tab, setTab] = useState<Tab>('teachers')
+  const [teachers, setTeachers] = useState(activeTeachers)
+  const [invited, setInvited] = useState(invitedTeachers)
+  const [pending, setPending] = useState(pendingUsers)
   const [q, setQ] = useState('')
   const [editTarget, setEditTarget] = useState<TeacherRow | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [actionError, setActionError] = useState('')
 
-  const filtered = teachers.filter(t => {
+  const currentList = tab === 'teachers' ? teachers : invited
+  const filtered = currentList.filter(t => {
     if (!q) return true
     const low = q.toLowerCase()
     return t.name.toLowerCase().includes(low)
@@ -69,29 +80,52 @@ export default function TeachersTable({ initialTeachers }: { initialTeachers: Te
   })
 
   function onSaved(saved: TeacherRow) {
-    setTeachers(prev => {
-      const idx = prev.findIndex(t => t.id === saved.id)
-      if (idx >= 0) {
-        const next = [...prev]
-        next[idx] = { ...next[idx], ...saved }
-        return next
-      }
-      return [{ ...saved, upcomingSessions: 0, totalSessions: 0 }, ...prev]
-    })
+    if (tab === 'teachers') {
+      setTeachers(prev => {
+        const idx = prev.findIndex(t => t.id === saved.id)
+        if (idx >= 0) { const next = [...prev]; next[idx] = { ...next[idx], ...saved }; return next }
+        return [{ ...saved, upcomingSessions: 0, totalSessions: 0 }, ...prev]
+      })
+    } else {
+      setInvited(prev => {
+        const idx = prev.findIndex(t => t.id === saved.id)
+        if (idx >= 0) { const next = [...prev]; next[idx] = { ...next[idx], ...saved }; return next }
+        return [{ ...saved, upcomingSessions: 0, totalSessions: 0 }, ...prev]
+      })
+    }
     setEditTarget(null)
     setShowCreate(false)
   }
 
   async function handleDelete(id: string) {
     setDeleting(true)
-    const supabase = createClient()
-    await supabase.from('teachers').delete().eq('id', id)
-    setTeachers(prev => prev.filter(t => t.id !== id))
+    await createClient().from('teachers').delete().eq('id', id)
+    if (tab === 'teachers') setTeachers(prev => prev.filter(t => t.id !== id))
+    else setInvited(prev => prev.filter(t => t.id !== id))
     setDeleteConfirm(null)
     setDeleting(false)
   }
 
-  const selectStyle: React.CSSProperties = {
+  async function handleApprove(userId: string) {
+    setActionLoading(userId)
+    setActionError('')
+    const res = await approveUser(userId)
+    setActionLoading(null)
+    if (!res.ok) { setActionError(res.error ?? 'Failed to approve'); return }
+    setPending(prev => prev.filter(u => u.id !== userId))
+    router.refresh()
+  }
+
+  async function handleReject(userId: string) {
+    setActionLoading(userId + '-reject')
+    setActionError('')
+    const res = await rejectUser(userId)
+    setActionLoading(null)
+    if (!res.ok) { setActionError(res.error ?? 'Failed to reject'); return }
+    setPending(prev => prev.filter(u => u.id !== userId))
+  }
+
+  const inputStyle: React.CSSProperties = {
     padding: '7px 10px',
     borderRadius: '10px',
     border: '1px solid var(--color-border)',
@@ -101,152 +135,221 @@ export default function TeachersTable({ initialTeachers }: { initialTeachers: Te
     outline: 'none',
   }
 
+  const TABS: { id: Tab; label: string; icon: React.ReactNode; count: number }[] = [
+    { id: 'teachers', label: 'Teachers', icon: <UserCheck size={14} />, count: teachers.length },
+    { id: 'pending', label: 'Pending', icon: <Clock size={14} />, count: pending.length },
+    { id: 'invited', label: 'Invited', icon: <Users size={14} />, count: invited.length },
+  ]
+
   return (
     <>
-      {/* Filters + action row */}
-      <div
-        className="rounded-2xl p-4 flex items-center gap-3"
-        style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
-      >
-        <div className="relative flex-1 max-w-xs">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--color-text-muted)' }} />
-          <input
-            type="text"
-            placeholder="Search teachers…"
-            value={q}
-            onChange={e => setQ(e.target.value)}
-            className="w-full pl-8 pr-3 text-sm outline-none"
-            style={{ ...selectStyle, paddingLeft: '32px' }}
-          />
-        </div>
-        {q && (
-          <button onClick={() => setQ('')} className="flex items-center gap-1 text-sm" style={{ color: 'var(--color-text-muted)' }}>
-            <X size={13} /> Clear
-          </button>
-        )}
-        <div className="ml-auto">
+      {/* Tab bar */}
+      <div className="flex gap-2">
+        {TABS.map(t => (
           <button
-            onClick={() => setShowCreate(true)}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl text-white"
-            style={{ backgroundColor: '#0BB5C7' }}
+            key={t.id}
+            onClick={() => { setTab(t.id); setQ('') }}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all"
+            style={tab === t.id
+              ? { backgroundColor: '#0BB5C7', color: '#fff' }
+              : { backgroundColor: 'var(--color-surface)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' }}
           >
-            <Plus size={15} /> Add Teacher
+            {t.icon}
+            {t.label}
+            <span className="text-xs px-1.5 py-0.5 rounded-full font-semibold"
+              style={tab === t.id
+                ? { backgroundColor: 'rgba(255,255,255,0.25)', color: '#fff' }
+                : { backgroundColor: 'var(--color-bg)', color: 'var(--color-text-muted)' }}>
+              {t.count}
+            </span>
           </button>
-        </div>
+        ))}
       </div>
 
-      {/* Table */}
-      <div
-        className="rounded-2xl overflow-hidden"
-        style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
-      >
-        {filtered.length === 0 ? (
-          <p className="text-center py-16 text-sm" style={{ color: 'var(--color-text-muted)' }}>
-            {q ? 'No teachers match your search.' : 'No teachers yet. Add one to get started.'}
-          </p>
-        ) : (
-          <table className="w-full">
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg)' }}>
-                {['Teacher', 'Specialization', 'Email', 'Availability', 'Upcoming', 'Total', ''].map(h => (
-                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider"
-                    style={{ color: 'var(--color-text-muted)' }}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((t, i) => (
-                <tr key={t.id} style={{ borderBottom: i < filtered.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
-                  {/* Name */}
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      <Initials name={t.name} />
-                      <span className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>{t.name}</span>
-                    </div>
-                  </td>
+      {actionError && (
+        <p className="text-sm px-4 py-2 rounded-lg" style={{ backgroundColor: 'rgba(239,68,68,0.08)', color: 'var(--color-danger)' }}>
+          {actionError}
+        </p>
+      )}
 
-                  {/* Specialization */}
-                  <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                    {t.specialization ?? <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
-                  </td>
-
-                  {/* Email */}
-                  <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                    {t.email}
-                  </td>
-
-                  {/* Availability */}
-                  <td className="px-4 py-3">
-                    <AvailabilityTags teacher={t} />
-                  </td>
-
-                  {/* Upcoming */}
-                  <td className="px-4 py-3 text-sm text-center font-medium" style={{ color: 'var(--color-text-primary)' }}>
-                    {t.upcomingSessions > 0 ? (
-                      <span className="px-2 py-0.5 rounded-md text-xs font-semibold"
-                        style={{ backgroundColor: 'rgba(11,181,199,0.1)', color: '#0BB5C7' }}>
-                        {t.upcomingSessions}
-                      </span>
-                    ) : (
-                      <span style={{ color: 'var(--color-text-muted)' }}>—</span>
-                    )}
-                  </td>
-
-                  {/* Total */}
-                  <td className="px-4 py-3 text-sm text-center" style={{ color: 'var(--color-text-muted)' }}>
-                    {t.totalSessions}
-                  </td>
-
-                  {/* Actions */}
-                  <td className="px-4 py-3">
-                    {deleteConfirm === t.id ? (
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>Delete?</span>
-                        <button
-                          onClick={() => handleDelete(t.id)}
-                          disabled={deleting}
-                          className="text-xs font-semibold px-2 py-1 rounded-lg disabled:opacity-50"
-                          style={{ backgroundColor: 'rgba(239,68,68,0.1)', color: 'var(--color-danger)' }}
-                        >
-                          {deleting ? '…' : 'Yes'}
-                        </button>
-                        <button
-                          onClick={() => setDeleteConfirm(null)}
-                          className="text-xs px-2 py-1 rounded-lg"
-                          style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
-                        >
-                          No
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => setEditTarget(t)}
-                          className="w-7 h-7 rounded-lg flex items-center justify-center"
-                          style={{ color: 'var(--color-text-muted)' }}
-                          title="Edit"
-                        >
-                          <Pencil size={13} />
-                        </button>
-                        <button
-                          onClick={() => setDeleteConfirm(t.id)}
-                          className="w-7 h-7 rounded-lg flex items-center justify-center"
-                          style={{ color: 'var(--color-danger)' }}
-                          title="Delete"
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                    )}
-                  </td>
+      {/* ── PENDING TAB ─────────────────────────────────────────────────────── */}
+      {tab === 'pending' && (
+        <div className="rounded-2xl overflow-hidden"
+          style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
+          {pending.length === 0 ? (
+            <p className="text-center py-16 text-sm" style={{ color: 'var(--color-text-muted)' }}>
+              No pending registrations.
+            </p>
+          ) : (
+            <table className="w-full">
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg)' }}>
+                  {['Name', 'Email', 'Registered', 'Actions'].map(h => (
+                    <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider"
+                      style={{ color: 'var(--color-text-muted)' }}>{h}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+              </thead>
+              <tbody>
+                {pending.map((u, i) => (
+                  <tr key={u.id} style={{ borderBottom: i < pending.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <Initials name={u.name} />
+                        <span className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>{u.name}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)' }}>{u.email}</td>
+                    <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-muted)' }}>
+                      {new Date(u.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleApprove(u.id)}
+                          disabled={actionLoading === u.id}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-50"
+                          style={{ backgroundColor: 'rgba(34,197,94,0.1)', color: '#16a34a' }}
+                        >
+                          <Check size={12} />
+                          {actionLoading === u.id ? 'Approving…' : 'Approve'}
+                        </button>
+                        <button
+                          onClick={() => handleReject(u.id)}
+                          disabled={actionLoading === u.id + '-reject'}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-50"
+                          style={{ backgroundColor: 'rgba(239,68,68,0.08)', color: 'var(--color-danger)' }}
+                        >
+                          <UserX size={12} />
+                          {actionLoading === u.id + '-reject' ? 'Rejecting…' : 'Reject'}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* ── TEACHERS / INVITED TABS ──────────────────────────────────────────── */}
+      {tab !== 'pending' && (
+        <>
+          <div className="rounded-2xl p-4 flex items-center gap-3"
+            style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
+            <div className="relative flex-1 max-w-xs">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--color-text-muted)' }} />
+              <input
+                type="text"
+                placeholder={`Search ${tab === 'teachers' ? 'teachers' : 'invited'}…`}
+                value={q}
+                onChange={e => setQ(e.target.value)}
+                className="w-full text-sm outline-none"
+                style={{ ...inputStyle, paddingLeft: '32px' }}
+              />
+            </div>
+            {q && (
+              <button onClick={() => setQ('')} className="flex items-center gap-1 text-sm" style={{ color: 'var(--color-text-muted)' }}>
+                <X size={13} /> Clear
+              </button>
+            )}
+            {tab === 'invited' && (
+              <div className="ml-auto">
+                <button
+                  onClick={() => setShowCreate(true)}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl text-white"
+                  style={{ backgroundColor: '#0BB5C7' }}
+                >
+                  <Plus size={15} /> Add Teacher
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-2xl overflow-hidden"
+            style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
+            {filtered.length === 0 ? (
+              <p className="text-center py-16 text-sm" style={{ color: 'var(--color-text-muted)' }}>
+                {q
+                  ? 'No teachers match your search.'
+                  : tab === 'teachers'
+                    ? 'No active teachers yet. Approve a pending registration or add one.'
+                    : 'No invited teachers. Use "Add Teacher" to create a teacher record.'}
+              </p>
+            ) : (
+              <table className="w-full">
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg)' }}>
+                    {['Teacher', 'Specialization', 'Email', 'Availability', 'Upcoming', 'Total', ''].map(h => (
+                      <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider"
+                        style={{ color: 'var(--color-text-muted)' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((t, i) => (
+                    <tr key={t.id} style={{ borderBottom: i < filtered.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <Initials name={t.name} />
+                          <span className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>{t.name}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                        {t.specialization ?? <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
+                      </td>
+                      <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)' }}>{t.email}</td>
+                      <td className="px-4 py-3"><AvailabilityTags teacher={t} /></td>
+                      <td className="px-4 py-3 text-sm text-center font-medium" style={{ color: 'var(--color-text-primary)' }}>
+                        {t.upcomingSessions > 0 ? (
+                          <span className="px-2 py-0.5 rounded-md text-xs font-semibold"
+                            style={{ backgroundColor: 'rgba(11,181,199,0.1)', color: '#0BB5C7' }}>
+                            {t.upcomingSessions}
+                          </span>
+                        ) : <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-center" style={{ color: 'var(--color-text-muted)' }}>
+                        {t.totalSessions}
+                      </td>
+                      <td className="px-4 py-3">
+                        {deleteConfirm === t.id ? (
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>Delete?</span>
+                            <button onClick={() => handleDelete(t.id)} disabled={deleting}
+                              className="text-xs font-semibold px-2 py-1 rounded-lg disabled:opacity-50"
+                              style={{ backgroundColor: 'rgba(239,68,68,0.1)', color: 'var(--color-danger)' }}>
+                              {deleting ? '…' : 'Yes'}
+                            </button>
+                            <button onClick={() => setDeleteConfirm(null)}
+                              className="text-xs px-2 py-1 rounded-lg"
+                              style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}>
+                              No
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => setEditTarget(t)}
+                              className="w-7 h-7 rounded-lg flex items-center justify-center"
+                              style={{ color: 'var(--color-text-muted)' }} title="Edit">
+                              <Pencil size={13} />
+                            </button>
+                            <button onClick={() => setDeleteConfirm(t.id)}
+                              className="w-7 h-7 rounded-lg flex items-center justify-center"
+                              style={{ color: 'var(--color-danger)' }} title="Delete">
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </>
+      )}
 
       {showCreate && (
         <TeacherFormModal onClose={() => setShowCreate(false)} onSaved={onSaved} />

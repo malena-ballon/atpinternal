@@ -1,6 +1,5 @@
 import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
-import { signOut } from '@/app/actions'
 import { Bell, Search } from 'lucide-react'
 import Sidebar from './components/Sidebar'
 
@@ -35,7 +34,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
       <Sidebar
         name={profile.name}
         role={profile.role}
-        pendingApprovals={pendingApprovals ?? 0}
       />
 
       {/* ── Main area ───────────────────────────────────────────── */}

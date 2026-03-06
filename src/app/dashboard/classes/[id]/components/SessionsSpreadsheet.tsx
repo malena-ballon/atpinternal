@@ -2,9 +2,60 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { format, parseISO, isToday, isBefore, startOfDay, parse, isValid } from 'date-fns'
-import { Plus, Trash2, Loader2, Check, CalendarDays, AlertTriangle, Pencil } from 'lucide-react'
+import { Plus, Trash2, Loader2, Check, CalendarDays, AlertTriangle, Pencil, Mail, Search, ChevronDown, X } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
-import type { SessionRow, SessionStatus, SubjectRow, TeacherRow } from '@/types'
+import type { SessionRow, SessionStatus, SubjectRow, TeacherRow, StudentRow } from '@/types'
+import ExportButton, { downloadBlob, pdfFileName } from './pdf/ExportButton'
+import EmailSessionsModal from './EmailSessionsModal'
+
+// ─── Mini MultiSelect (same pattern as master schedule) ───────────────────────
+interface MultiSelectProps {
+  label: string
+  options: { value: string; label: string }[]
+  selected: Set<string>
+  onToggle: (v: string) => void
+  onSelectAll: () => void
+  onClear: () => void
+}
+function MultiSelect({ label, options, selected, onToggle, onSelectAll, onClear }: MultiSelectProps) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    function out(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener('mousedown', out)
+    return () => document.removeEventListener('mousedown', out)
+  }, [])
+  const allSelected = selected.size === options.length
+  const display = selected.size === 0 || allSelected
+    ? label
+    : selected.size === 1 ? options.find(o => selected.has(o.value))?.label ?? '1 selected' : `${selected.size} selected`
+  return (
+    <div className="relative" ref={ref}>
+      <button onClick={() => setOpen(v => !v)} style={{ padding:'6px 10px', borderRadius:'10px', border:'1px solid var(--color-border)', backgroundColor:'var(--color-surface)', color: selected.size > 0 && !allSelected ? 'var(--color-text-primary)' : 'var(--color-text-secondary)', fontSize:'13px', display:'flex', alignItems:'center', gap:'6px', cursor:'pointer', whiteSpace:'nowrap' }}>
+        <span>{display}</span><ChevronDown size={12} style={{ color:'var(--color-text-muted)', flexShrink:0 }} />
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 mt-1 z-30 rounded-xl overflow-hidden" style={{ minWidth:'160px', backgroundColor:'var(--color-surface)', border:'1px solid var(--color-border)', boxShadow:'0 4px 16px rgba(0,0,0,0.12)' }}>
+          <div className="flex items-center justify-between px-3 py-2" style={{ borderBottom:'1px solid var(--color-border)' }}>
+            <span className="text-xs font-semibold uppercase tracking-wider" style={{ color:'var(--color-text-muted)' }}>{label}</span>
+            <div className="flex gap-2">
+              <button className="text-xs px-1.5 py-0.5 rounded" style={{ color:'#0BB5C7', border:'1px solid rgba(11,181,199,0.3)' }} onClick={onSelectAll}>All</button>
+              <button className="text-xs px-1.5 py-0.5 rounded" style={{ color:'var(--color-text-muted)', border:'1px solid var(--color-border)' }} onClick={onClear}>None</button>
+            </div>
+          </div>
+          <div style={{ maxHeight:'200px', overflowY:'auto' }}>
+            {options.map(opt => (
+              <label key={opt.value} className="flex items-center gap-2.5 px-3 py-2 text-sm cursor-pointer" style={{ color:'var(--color-text-primary)' }} onMouseEnter={e=>(e.currentTarget.style.backgroundColor='rgba(11,181,199,0.06)')} onMouseLeave={e=>(e.currentTarget.style.backgroundColor='')}>
+                <input type="checkbox" checked={selected.has(opt.value)} onChange={() => onToggle(opt.value)} style={{ accentColor:'#0BB5C7' }} />
+                {opt.label}
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ─── Availability conflict helper ─────────────────────────────────────────────
 function toMin(t: string) { const [h, m] = t.split(':').map(Number); return h * 60 + m }
@@ -38,9 +89,11 @@ interface Sel { r1: number; r2: number; c1: number; c2: number }
 
 interface Props {
   classId: string
+  className: string
   initialSessions: SessionRow[]
   subjects: SubjectRow[]
   teachers: TeacherRow[]
+  students: StudentRow[]
   initialStudentCount: number
 }
 
@@ -171,14 +224,16 @@ function applyCellValue(row: DraftRow, c: number, raw: string, teachers: Teacher
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function SessionsSpreadsheet({ classId, initialSessions, subjects, teachers, initialStudentCount }: Props) {
+export default function SessionsSpreadsheet({ classId, className, initialSessions, subjects, teachers, students, initialStudentCount }: Props) {
   const [rows, setRows] = useState<DraftRow[]>(() =>
     [...initialSessions]
       .sort((a,b) => a.date.localeCompare(b.date) || a.start_time.localeCompare(b.start_time))
       .map(sessionToRow)
   )
   const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set())
-  const [studentCount, setStudentCount] = useState(initialStudentCount.toString())
+  const [studentCount] = useState(initialStudentCount.toString())
+  const [showEmailModal, setShowEmailModal] = useState(false)
+
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
   const [saved, setSaved] = useState(false)
@@ -186,6 +241,59 @@ export default function SessionsSpreadsheet({ classId, initialSessions, subjects
   // Edit mode
   const [editMode, setEditMode] = useState(false)
   const [showExitConfirm, setShowExitConfirm] = useState(false)
+
+  // ─── Filter state (only active in view mode) ──────────────────────────────
+  const [filterQ, setFilterQ] = useState('')
+  const [filterStatuses, setFilterStatuses] = useState<Set<string>>(new Set())
+  const [filterTeacherIds, setFilterTeacherIds] = useState<Set<string>>(new Set())
+  const [filterSubjectIds, setFilterSubjectIds] = useState<Set<string>>(new Set())
+  const [filterFrom, setFilterFrom] = useState('')
+  const [filterTo, setFilterTo] = useState('')
+
+  function toggleFilter<T extends string>(set: Set<T>, val: T, setter: (s: Set<T>) => void) {
+    const next = new Set(set); next.has(val) ? next.delete(val) : next.add(val); setter(next)
+  }
+  const hasFilters = !!(filterQ || filterStatuses.size > 0 || filterTeacherIds.size > 0 || filterSubjectIds.size > 0 || filterFrom || filterTo)
+
+  const teacherOptions = teachers.map(t => ({ value: t.id, label: t.name }))
+  const subjectOptions = subjects.map(s => ({ value: s.id, label: s.name }))
+
+  const displayRows = editMode ? rows : rows.filter(row => {
+    if (filterQ) {
+      const q = filterQ.toLowerCase()
+      const tName = teachers.find(t => t.id === row.teacher_id)?.name ?? ''
+      const sName = subjects.find(s => s.id === row.subject_id)?.name ?? ''
+      if (!tName.toLowerCase().includes(q) && !sName.toLowerCase().includes(q)) return false
+    }
+    if (filterStatuses.size > 0 && !filterStatuses.has(row.status)) return false
+    if (filterTeacherIds.size > 0 && !filterTeacherIds.has(row.teacher_id)) return false
+    if (filterSubjectIds.size > 0 && !filterSubjectIds.has(row.subject_id ?? '')) return false
+    if (filterFrom && row.date < filterFrom) return false
+    if (filterTo && row.date > filterTo) return false
+    return true
+  })
+
+  async function handleExportPDF() {
+    const { pdf } = await import('@react-pdf/renderer')
+    const { default: SessionSchedulePDF } = await import('./pdf/SessionSchedulePDF')
+    const React = (await import('react')).default
+    const sessionRows = displayRows.map((row, i) => {
+      let day = '—'
+      try { if (row.date) day = new Date(row.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' }) } catch {}
+      return {
+        index: i + 1,
+        date: row.date ? format(parseISO(row.date), 'MMM d, yyyy') : '—',
+        day,
+        startTime: row.start_time,
+        endTime: row.end_time,
+        teacher: teachers.find(t => t.id === row.teacher_id)?.name ?? '',
+        subject: subjects.find(s => s.id === row.subject_id)?.name ?? '',
+        status: row.status,
+      }
+    })
+    const blob = await pdf(React.createElement(SessionSchedulePDF, { className, sessions: sessionRows }) as any).toBlob()
+    downloadBlob(blob, pdfFileName(className, 'session-schedule'))
+  }
   const savedSnapshot = useRef<DraftRow[]>([])
   const editModeRef = useRef(false)
 
@@ -425,19 +533,23 @@ export default function SessionsSpreadsheet({ classId, initialSessions, subjects
     <div>
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3 mb-3">
-        <div className="flex items-center gap-2">
-          <label className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>Students enrolled:</label>
-          <input type="number" min="0" value={studentCount} onChange={e => setStudentCount(e.target.value)}
-            className="w-20 text-sm text-center rounded-lg px-2 py-1.5 outline-none"
-            style={{ border: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)' }} />
-        </div>
         <div className="ml-auto flex items-center gap-2">
           {!editMode && (
-            <button onClick={enterEditMode}
-              className="flex items-center gap-2 px-4 py-1.5 text-sm font-semibold rounded-xl text-white"
-              style={{ backgroundColor: '#0BB5C7' }}>
-              <Pencil size={13} /> Edit
-            </button>
+            <>
+              <ExportButton onExport={handleExportPDF} label="Export PDF" />
+              <button
+                onClick={() => setShowEmailModal(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg"
+                style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)', backgroundColor: 'var(--color-bg)' }}
+              >
+                <Mail size={12} /> Email Schedule
+              </button>
+              <button onClick={enterEditMode}
+                className="flex items-center gap-2 px-4 py-1.5 text-sm font-semibold rounded-xl text-white"
+                style={{ backgroundColor: '#0BB5C7' }}>
+                <Pencil size={13} /> Edit
+              </button>
+            </>
           )}
           {editMode && (
             <>
@@ -464,6 +576,47 @@ export default function SessionsSpreadsheet({ classId, initialSessions, subjects
         </p>
       )}
 
+      {/* Filters — view mode only */}
+      {!editMode && (
+        <div className="rounded-xl p-3 mb-3 flex flex-wrap items-center gap-2" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
+          {/* Search */}
+          <div className="relative flex-1 min-w-[160px]">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--color-text-muted)' }} />
+            <input
+              type="text" placeholder="Search teacher or subject…" value={filterQ} onChange={e => setFilterQ(e.target.value)}
+              className="w-full text-sm outline-none"
+              style={{ padding:'6px 10px 6px 30px', borderRadius:'10px', border:'1px solid var(--color-border)', backgroundColor:'var(--color-surface)', color:'var(--color-text-primary)', fontSize:'13px' }}
+            />
+          </div>
+          <MultiSelect label="Teachers" options={teacherOptions} selected={filterTeacherIds}
+            onToggle={v => toggleFilter(filterTeacherIds, v, setFilterTeacherIds)}
+            onSelectAll={() => setFilterTeacherIds(new Set(teacherOptions.map(o => o.value)))}
+            onClear={() => setFilterTeacherIds(new Set())} />
+          <MultiSelect label="Subjects" options={subjectOptions} selected={filterSubjectIds}
+            onToggle={v => toggleFilter(filterSubjectIds, v, setFilterSubjectIds)}
+            onSelectAll={() => setFilterSubjectIds(new Set(subjectOptions.map(o => o.value)))}
+            onClear={() => setFilterSubjectIds(new Set())} />
+          <MultiSelect label="Status" options={STATUS_OPTIONS} selected={filterStatuses}
+            onToggle={v => toggleFilter(filterStatuses, v, setFilterStatuses)}
+            onSelectAll={() => setFilterStatuses(new Set(STATUS_OPTIONS.map(o => o.value)))}
+            onClear={() => setFilterStatuses(new Set())} />
+          <input type="date" value={filterFrom} onChange={e => setFilterFrom(e.target.value)} title="From date"
+            style={{ padding:'6px 10px', borderRadius:'10px', border:'1px solid var(--color-border)', backgroundColor:'var(--color-surface)', color:'var(--color-text-primary)', fontSize:'13px', outline:'none' }} />
+          <input type="date" value={filterTo} onChange={e => setFilterTo(e.target.value)} title="To date"
+            style={{ padding:'6px 10px', borderRadius:'10px', border:'1px solid var(--color-border)', backgroundColor:'var(--color-surface)', color:'var(--color-text-primary)', fontSize:'13px', outline:'none' }} />
+          {hasFilters && (
+            <button onClick={() => { setFilterQ(''); setFilterStatuses(new Set()); setFilterTeacherIds(new Set()); setFilterSubjectIds(new Set()); setFilterFrom(''); setFilterTo('') }}
+              className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg"
+              style={{ color:'var(--color-text-muted)', border:'1px solid var(--color-border)' }}>
+              <X size={11} /> Clear
+            </button>
+          )}
+          <span className="text-xs ml-auto" style={{ color:'var(--color-text-muted)' }}>
+            {displayRows.length} of {rows.length}
+          </span>
+        </div>
+      )}
+
       {saveError && (
         <div className="mb-3 text-sm p-2.5 rounded-lg" style={{ backgroundColor: 'rgba(239,68,68,0.08)', color: 'var(--color-danger)' }}>
           {saveError}
@@ -481,11 +634,11 @@ export default function SessionsSpreadsheet({ classId, initialSessions, subjects
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && (
-              <tr><td colSpan={9} className="px-4 py-12 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>No sessions yet.</td></tr>
+            {displayRows.length === 0 && (
+              <tr><td colSpan={9} className="px-4 py-12 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>{rows.length === 0 ? 'No sessions yet.' : 'No sessions match the filters.'}</td></tr>
             )}
-            {rows.map((row, i) => (
-              <tr key={row._key} style={{ borderBottom: i < rows.length-1 ? '1px solid var(--color-border)' : 'none' }}>
+            {displayRows.map((row, i) => (
+              <tr key={row._key} style={{ borderBottom: i < displayRows.length-1 ? '1px solid var(--color-border)' : 'none' }}>
                 <td className="px-3 py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)', width: '36px' }}>{i+1}</td>
 
                 {!editMode ? (
@@ -632,6 +785,17 @@ export default function SessionsSpreadsheet({ classId, initialSessions, subjects
             </div>
           </div>
         </div>
+      )}
+
+      {/* Email sessions modal */}
+      {showEmailModal && (
+        <EmailSessionsModal
+          classId={classId}
+          className={className}
+          students={students}
+          sessionIds={displayRows.filter(r => r.id).map(r => r.id!)}
+          onClose={() => setShowEmailModal(false)}
+        />
       )}
 
       {/* Unsaved changes leave warning */}

@@ -77,7 +77,7 @@ export default function ClassesTable({ initialClasses }: { initialClasses: Class
                     <Link
                       href={`/dashboard/classes/${cls.id}`}
                       className="text-sm font-semibold hover:underline"
-                      style={{ color: '#0BB5C7' }}
+                      style={{ color: '#0A1045' }}
                     >
                       {cls.name}
                     </Link>

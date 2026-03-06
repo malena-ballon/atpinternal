@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Loader2 } from 'lucide-react'
+import { Loader2, X } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 import Modal from '@/app/dashboard/components/Modal'
 import ThresholdInput from '@/app/dashboard/components/ThresholdInput'
@@ -31,12 +31,24 @@ export default function ExamFormModal({ classId, classPassingPct, subjects, exam
   const isEdit = !!exam
   const [name, setName] = useState(exam?.name ?? '')
   const [date, setDate] = useState(exam?.date ?? '')
-  const [subjectId, setSubjectId] = useState(exam?.subject_id ?? '')
+
+  // Initialise from subject_ids (multi) or fall back to legacy subject_id
+  const initIds: string[] = exam?.subject_ids?.length
+    ? exam.subject_ids
+    : exam?.subject_id ? [exam.subject_id] : []
+  const [subjectIds, setSubjectIds] = useState<string[]>(initIds)
+
   const [passingOverride, setPassingOverride] = useState(
     exam?.passing_pct_override != null ? String(exam.passing_pct_override) : ''
   )
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  function toggleSubject(id: string) {
+    setSubjectIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    )
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -50,25 +62,28 @@ export default function ExamFormModal({ classId, classPassingPct, subjects, exam
       class_id: classId,
       name: name.trim(),
       date: date || null,
-      subject_id: subjectId || null,
+      subject_id: subjectIds[0] ?? null,        // keep primary for backward compat
+      subject_ids: subjectIds.length > 0 ? subjectIds : null,
       passing_pct_override: pctValue,
     }
 
+    const select = 'id, class_id, subject_id, subject_ids, name, date, total_items, passing_pct_override, created_at, updated_at, subjects(name)'
+
     const { data, error: err } = isEdit
-      ? await supabase.from('exams').update(payload).eq('id', exam!.id)
-          .select('id, class_id, subject_id, name, date, total_items, passing_pct_override, created_at, updated_at, subjects(name)').single()
-      : await supabase.from('exams').insert({ ...payload, total_items: 1 })
-          .select('id, class_id, subject_id, name, date, total_items, passing_pct_override, created_at, updated_at, subjects(name)').single()
+      ? await supabase.from('exams').update(payload).eq('id', exam!.id).select(select).single()
+      : await supabase.from('exams').insert({ ...payload, total_items: 1 }).select(select).single()
 
     setLoading(false)
     if (err) { setError(err.message); return }
     const formattedData = {
       ...data,
-      subjects: Array.isArray(data.subjects) ? data.subjects[0] : data.subjects
+      subjects: Array.isArray(data.subjects) ? data.subjects[0] : data.subjects,
     }
-
     onSaved(formattedData as unknown as ExamRow)
   }
+
+  // Non-assessment subjects only
+  const selectableSubjects = subjects.filter(s => s.name.toLowerCase() !== 'assessment')
 
   return (
     <Modal title={isEdit ? 'Edit Exam' : 'Add Exam Record'} onClose={onClose} width="md">
@@ -87,19 +102,46 @@ export default function ExamFormModal({ classId, classPassingPct, subjects, exam
             placeholder="e.g. 1st Comprehensive Test in Science" />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>Date</label>
-            <input style={inputStyle} type="date" value={date} onChange={e => setDate(e.target.value)} />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>Subject</label>
-            <select style={inputStyle} value={subjectId} onChange={e => setSubjectId(e.target.value)}>
-              <option value="">— None —</option>
-              {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          </div>
+        <div>
+          <label className="block text-sm font-medium mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>Date</label>
+          <input style={inputStyle} type="date" value={date} onChange={e => setDate(e.target.value)} />
         </div>
+
+        {/* Multi-subject selector */}
+        {selectableSubjects.length > 0 && (
+          <div>
+            <label className="block text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+              Subjects Covered
+              <span className="ml-1.5 text-xs font-normal" style={{ color: 'var(--color-text-muted)' }}>
+                (select one or more — determines score import columns)
+              </span>
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {selectableSubjects.map(s => {
+                const active = subjectIds.includes(s.id)
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => toggleSubject(s.id)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-all"
+                    style={active
+                      ? { backgroundColor: 'rgba(11,181,199,0.15)', color: '#0BB5C7', border: '1px solid rgba(11,181,199,0.4)' }
+                      : { backgroundColor: 'var(--color-bg)', color: 'var(--color-text-muted)', border: '1px solid var(--color-border)' }}
+                  >
+                    {active && <X size={10} />}
+                    {s.name}
+                  </button>
+                )
+              })}
+            </div>
+            {subjectIds.length > 0 && (
+              <p className="mt-1.5 text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                {subjectIds.length} subject{subjectIds.length !== 1 ? 's' : ''} selected → {subjectIds.length} score column{subjectIds.length !== 1 ? 's' : ''} during import
+              </p>
+            )}
+          </div>
+        )}
 
         <ThresholdInput
           label="Passing % Override"

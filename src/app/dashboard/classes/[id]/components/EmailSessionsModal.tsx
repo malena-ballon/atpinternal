@@ -3,21 +3,21 @@
 import { useState, useMemo } from 'react'
 import { Loader2, CheckCircle2, Mail, Search } from 'lucide-react'
 import Modal from '@/app/dashboard/components/Modal'
-import { emailStudentReport } from '@/app/actions'
-import type { StudentStats } from './PerformanceInsights'
+import { emailSessionSchedule } from '@/app/actions'
+import type { StudentRow } from '@/types'
 
 interface Props {
   classId: string
   className: string
-  studentStats: StudentStats[]
-  classPassingPct: number
+  students: StudentRow[]
+  sessionIds: string[]
   onClose: () => void
 }
 
-export default function EmailReportsModal({ classId, className, studentStats, classPassingPct, onClose }: Props) {
+export default function EmailSessionsModal({ classId, className, students, sessionIds, onClose }: Props) {
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<Set<string>>(
-    () => new Set(studentStats.filter(s => s.student.email).map(s => s.student.id))
+    () => new Set(students.filter(s => s.email).map(s => s.id))
   )
   const [sending, setSending] = useState(false)
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
@@ -25,53 +25,20 @@ export default function EmailReportsModal({ classId, className, studentStats, cl
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim()
-    if (!q) return studentStats
-    return studentStats.filter(s => s.student.name.toLowerCase().includes(q) || (s.student.email ?? '').toLowerCase().includes(q))
-  }, [studentStats, query])
+    if (!q) return students
+    return students.filter(s => s.name.toLowerCase().includes(q) || (s.email ?? '').toLowerCase().includes(q))
+  }, [students, query])
 
-  const sendable = studentStats.filter(s => s.student.email && selected.has(s.student.id))
+  const sendable = students.filter(s => s.email && selected.has(s.id))
 
   function toggleOne(id: string) {
-    const s = studentStats.find(x => x.student.id === id)
-    if (!s?.student.email) return  // can't select students without email
+    const s = students.find(x => x.id === id)
+    if (!s?.email) return
     setSelected(prev => {
       const next = new Set(prev)
       next.has(id) ? next.delete(id) : next.add(id)
       return next
     })
-  }
-
-  function selectAll() {
-    setSelected(new Set(studentStats.filter(s => s.student.email).map(s => s.student.id)))
-  }
-
-  function deselectAll() {
-    setSelected(new Set())
-  }
-
-  async function handleSend() {
-    if (!sendable.length) return
-    setSending(true)
-    setProgress({ done: 0, total: sendable.length })
-    let sent = 0, skipped = 0, failed = 0
-    const errors: string[] = []
-
-    const BATCH = 3
-    for (let i = 0; i < sendable.length; i += BATCH) {
-      const batch = sendable.slice(i, i + BATCH)
-      const results = await Promise.all(
-        batch.map(s => emailStudentReport(s.student.id, classId, classPassingPct))
-      )
-      for (const r of results) {
-        if (r.skipped) skipped++
-        else if (r.ok) sent++
-        else { failed++; if (r.error) errors.push(r.error) }
-      }
-      setProgress({ done: Math.min(i + BATCH, sendable.length), total: sendable.length })
-    }
-
-    setSending(false)
-    setResult({ sent, skipped, failed, errors })
   }
 
   const inputStyle: React.CSSProperties = {
@@ -85,9 +52,32 @@ export default function EmailReportsModal({ classId, className, studentStats, cl
     outline: 'none',
   }
 
+  async function handleSend() {
+    if (!sendable.length) return
+    setSending(true)
+    setProgress({ done: 0, total: sendable.length })
+    let sent = 0, skipped = 0, failed = 0
+    const errors: string[] = []
+
+    const BATCH = 3
+    for (let i = 0; i < sendable.length; i += BATCH) {
+      const batch = sendable.slice(i, i + BATCH)
+      const results = await Promise.all(batch.map(s => emailSessionSchedule(s.id, classId, sessionIds)))
+      for (const r of results) {
+        if (r.skipped) skipped++
+        else if (r.ok) sent++
+        else { failed++; if (r.error) errors.push(r.error) }
+      }
+      setProgress({ done: Math.min(i + BATCH, sendable.length), total: sendable.length })
+    }
+
+    setSending(false)
+    setResult({ sent, skipped, failed, errors })
+  }
+
   if (result) {
     return (
-      <Modal title="Email Reports" onClose={onClose} width="md">
+      <Modal title="Email Schedule" onClose={onClose} width="md">
         <div className="py-6 text-center space-y-3">
           <CheckCircle2 size={36} style={{ color: result.failed > 0 ? 'var(--color-warning)' : 'var(--color-success)', margin: '0 auto' }} />
           <p className="text-base font-semibold" style={{ color: 'var(--color-text-primary)' }}>
@@ -114,17 +104,29 @@ export default function EmailReportsModal({ classId, className, studentStats, cl
   }
 
   return (
-    <Modal title="Email Student Reports" onClose={onClose} width="md">
+    <Modal title="Email Session Schedule" onClose={onClose} width="md">
       <div className="space-y-4">
+        <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+          Students will receive a PDF of the full session schedule for <strong>{className}</strong>.
+        </p>
+
         {/* Recipients */}
         <div>
           <div className="flex items-center justify-between mb-2">
             <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>Recipients</p>
             <div className="flex gap-2">
-              <button onClick={selectAll} className="text-xs px-2 py-0.5 rounded" style={{ border: '1px solid var(--color-border)', color: '#0BB5C7' }}>
+              <button
+                onClick={() => setSelected(new Set(students.filter(s => s.email).map(s => s.id)))}
+                className="text-xs px-2 py-0.5 rounded"
+                style={{ border: '1px solid var(--color-border)', color: '#0BB5C7' }}
+              >
                 Select All
               </button>
-              <button onClick={deselectAll} className="text-xs px-2 py-0.5 rounded" style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-muted)' }}>
+              <button
+                onClick={() => setSelected(new Set())}
+                className="text-xs px-2 py-0.5 rounded"
+                style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-muted)' }}
+              >
                 Deselect All
               </button>
             </div>
@@ -144,11 +146,11 @@ export default function EmailReportsModal({ classId, className, studentStats, cl
           {/* Student list */}
           <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
             {filtered.map(s => {
-              const hasEmail = !!s.student.email
-              const isChecked = selected.has(s.student.id)
+              const hasEmail = !!s.email
+              const isChecked = selected.has(s.id)
               return (
                 <label
-                  key={s.student.id}
+                  key={s.id}
                   className="flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer"
                   style={{
                     backgroundColor: 'var(--color-bg)',
@@ -161,14 +163,14 @@ export default function EmailReportsModal({ classId, className, studentStats, cl
                     type="checkbox"
                     checked={isChecked}
                     disabled={!hasEmail}
-                    onChange={() => toggleOne(s.student.id)}
+                    onChange={() => toggleOne(s.id)}
                     style={{ accentColor: '#0BB5C7' }}
                   />
                   <span className="flex-1 text-sm font-medium truncate" style={{ color: 'var(--color-text-primary)' }}>
-                    {s.student.name}
+                    {s.name}
                   </span>
                   <span className="text-xs truncate max-w-[160px]" style={{ color: hasEmail ? 'var(--color-text-muted)' : 'var(--color-danger)' }}>
-                    {s.student.email ?? 'No email'}
+                    {s.email ?? 'No email'}
                   </span>
                 </label>
               )
@@ -179,11 +181,11 @@ export default function EmailReportsModal({ classId, className, studentStats, cl
           </div>
         </div>
 
-        {/* Progress bar while sending */}
+        {/* Progress bar */}
         {sending && progress && (
           <div className="space-y-1">
             <div className="flex justify-between text-xs" style={{ color: 'var(--color-text-muted)' }}>
-              <span>Sending reports…</span>
+              <span>Sending schedules…</span>
               <span>{progress.done} / {progress.total}</span>
             </div>
             <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--color-border)' }}>
@@ -214,7 +216,7 @@ export default function EmailReportsModal({ classId, className, studentStats, cl
             style={{ backgroundColor: '#0BB5C7' }}
           >
             {sending ? <Loader2 size={14} className="animate-spin" /> : <Mail size={14} />}
-            {sending ? 'Sending…' : `Send Reports (${sendable.length})`}
+            {sending ? 'Sending…' : `Send Schedule (${sendable.length})`}
           </button>
         </div>
       </div>

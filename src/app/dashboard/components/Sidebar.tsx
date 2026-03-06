@@ -2,14 +2,16 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import Image from 'next/image'
 import {
-  GraduationCap,
   LayoutDashboard,
   CalendarDays,
   BookOpen,
   Users,
-  Settings,
+  BookMarked,
+  LogOut,
 } from 'lucide-react'
+import { signOut } from '@/app/actions'
 
 interface NavItemProps {
   href: string
@@ -28,8 +30,8 @@ function NavItem({ href, icon: Icon, label, badge, exact }: NavItemProps) {
       href={href}
       className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm font-medium"
       style={{
-        backgroundColor: isActive ? 'rgba(61,212,230,0.1)' : 'transparent',
-        color: isActive ? '#0BB5C7' : 'var(--color-text-secondary)',
+        backgroundColor: isActive ? 'rgba(255,255,255,0.12)' : 'transparent',
+        color: isActive ? '#FFFFFF' : 'rgba(255,255,255,0.65)',
       }}
     >
       <Icon size={18} strokeWidth={isActive ? 2.5 : 2} />
@@ -37,7 +39,7 @@ function NavItem({ href, icon: Icon, label, badge, exact }: NavItemProps) {
       {badge !== undefined && badge > 0 && (
         <span
           className="text-xs font-semibold px-1.5 py-0.5 rounded-full min-w-[20px] text-center"
-          style={{ backgroundColor: '#0BB5C7', color: '#fff' }}
+          style={{ backgroundColor: '#3DD4E6', color: '#0A1045' }}
         >
           {badge}
         </span>
@@ -49,10 +51,9 @@ function NavItem({ href, icon: Icon, label, badge, exact }: NavItemProps) {
 interface Props {
   name: string
   role: string
-  pendingApprovals: number
 }
 
-export default function Sidebar({ name, role, pendingApprovals }: Props) {
+export default function Sidebar({ name, role }: Props) {
   const initials = name
     .split(' ')
     .map(w => w[0])
@@ -65,8 +66,8 @@ export default function Sidebar({ name, role, pendingApprovals }: Props) {
       className="flex flex-col"
       style={{
         width: '240px',
-        backgroundColor: 'var(--color-surface)',
-        borderRight: '1px solid var(--color-border)',
+        backgroundColor: '#0A1045',
+        borderRight: '1px solid rgba(255,255,255,0.08)',
         position: 'fixed',
         top: 0,
         left: 0,
@@ -75,22 +76,17 @@ export default function Sidebar({ name, role, pendingApprovals }: Props) {
       }}
     >
       {/* Logo */}
-      <div className="px-5 py-5" style={{ borderBottom: '1px solid var(--color-border)' }}>
+      <div className="px-5 py-5" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
         <Link href="/dashboard" className="flex items-center gap-2.5">
-          <div
-            className="w-8 h-8 rounded-lg flex items-center justify-center"
-            style={{ backgroundColor: 'rgba(61,212,230,0.12)' }}
-          >
-            <GraduationCap size={18} style={{ color: '#0BB5C7' }} />
-          </div>
-          <span className="text-base font-bold" style={{ color: 'var(--color-text-primary)' }}>
+          <Image src="/logo.jpg" alt="Acadgenius" width={32} height={32} className="rounded-lg" />
+          <span className="text-base font-bold" style={{ color: '#FFFFFF' }}>
             Acadgenius
           </span>
         </Link>
       </div>
 
       {/* User profile */}
-      <div className="px-4 py-4" style={{ borderBottom: '1px solid var(--color-border)' }}>
+      <div className="px-4 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
         <div className="flex items-center gap-3">
           <div
             className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-white shrink-0"
@@ -99,10 +95,10 @@ export default function Sidebar({ name, role, pendingApprovals }: Props) {
             {initials}
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-semibold truncate" style={{ color: 'var(--color-text-primary)' }}>
+            <p className="text-sm font-semibold truncate" style={{ color: '#FFFFFF' }}>
               {name}
             </p>
-            <p className="text-xs truncate" style={{ color: 'var(--color-text-muted)' }}>
+            <p className="text-xs truncate" style={{ color: 'rgba(255,255,255,0.5)' }}>
               {role === 'admin' ? 'Dashboard Control' : 'Teacher'}
             </p>
           </div>
@@ -115,8 +111,24 @@ export default function Sidebar({ name, role, pendingApprovals }: Props) {
         <NavItem href="/dashboard/schedule" icon={CalendarDays} label="Master Schedule" />
         <NavItem href="/dashboard/classes" icon={BookOpen} label="Classes" />
         <NavItem href="/dashboard/teachers" icon={Users} label="Teachers" />
-        <NavItem href="/dashboard/settings" icon={Settings} label="Settings" badge={pendingApprovals} />
+        {role === 'admin' && (
+          <NavItem href="/dashboard/notebook" icon={BookMarked} label="Notebook" />
+        )}
       </nav>
+
+      {/* Sign out */}
+      <div className="px-3 pb-4" style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '12px' }}>
+        <form action={signOut}>
+          <button
+            type="submit"
+            className="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl transition-all text-sm font-medium"
+            style={{ color: 'rgba(255,255,255,0.65)' }}
+          >
+            <LogOut size={18} strokeWidth={2} />
+            <span>Sign Out</span>
+          </button>
+        </form>
+      </div>
     </aside>
   )
 }

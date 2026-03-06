@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef } from 'react'
-import { Plus, Trash2, Loader2 } from 'lucide-react'
+import { Plus, X, Loader2 } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 import type { SubjectRow } from '@/types'
 
@@ -15,13 +15,20 @@ export default function SubjectsManager({ classId, initialSubjects }: Props) {
   const [newName, setNewName] = useState('')
   const [adding, setAdding] = useState(false)
   const [removingId, setRemovingId] = useState<string | null>(null)
-  const [suggestions, setSuggestions] = useState<string[]>([])
+  const [suggestions, setSuggestions] = useState<{ name: string; alreadyAdded: boolean }[]>([])
   const [showSuggestions, setShowSuggestions] = useState(false)
+  const [alreadyAddedError, setAlreadyAddedError] = useState('')
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   async function handleAdd() {
     const name = newName.trim()
     if (!name) return
+    const existing = new Set(subjects.map(s => s.name.toLowerCase()))
+    if (existing.has(name.toLowerCase())) {
+      setAlreadyAddedError(`"${name}" is already added.`)
+      return
+    }
+    setAlreadyAddedError('')
     setAdding(true)
     setSuggestions([])
     setShowSuggestions(false)
@@ -48,6 +55,7 @@ export default function SubjectsManager({ classId, initialSubjects }: Props) {
 
   function handleInputChange(val: string) {
     setNewName(val)
+    setAlreadyAddedError('')
     clearTimeout(debounceRef.current)
     if (!val.trim()) { setSuggestions([]); setShowSuggestions(false); return }
     debounceRef.current = setTimeout(async () => {
@@ -59,15 +67,18 @@ export default function SubjectsManager({ classId, initialSubjects }: Props) {
         .limit(10)
       if (!data) return
       const existing = new Set(subjects.map(s => s.name.toLowerCase()))
-      const deduped = [...new Set(data.map((r: { name: string }) => r.name))]
-        .filter(n => !existing.has(n.toLowerCase()))
-        .slice(0, 6)
-      setSuggestions(deduped)
-      setShowSuggestions(deduped.length > 0)
+      const deduped = [...new Set(data.map((r: { name: string }) => r.name))].slice(0, 6)
+      const withStatus = deduped.map(n => ({ name: n, alreadyAdded: existing.has(n.toLowerCase()) }))
+      setSuggestions(withStatus)
+      setShowSuggestions(withStatus.length > 0)
     }, 300)
   }
 
-  function pickSuggestion(name: string) {
+  function pickSuggestion(name: string, alreadyAdded: boolean) {
+    if (alreadyAdded) {
+      setAlreadyAddedError(`"${name}" is already added.`)
+      return
+    }
     setNewName(name)
     setSuggestions([])
     setShowSuggestions(false)
@@ -76,24 +87,24 @@ export default function SubjectsManager({ classId, initialSubjects }: Props) {
   return (
     <div>
       {/* Subject list */}
-      <div className="space-y-2 mb-4">
+      <div className="flex flex-wrap gap-2 mb-4">
         {subjects.length === 0 ? (
           <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>No subjects added yet.</p>
         ) : (
           subjects.map(s => (
             <div
               key={s.id}
-              className="flex items-center justify-between px-4 py-2.5 rounded-xl"
-              style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)' }}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium"
+              style={{ backgroundColor: 'rgba(11,181,199,0.1)', color: '#0BB5C7', border: '1px solid rgba(11,181,199,0.2)' }}
             >
-              <span className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>{s.name}</span>
+              <span>{s.name}</span>
               <button
                 onClick={() => handleRemove(s.id)}
                 disabled={removingId === s.id}
-                className="w-7 h-7 flex items-center justify-center rounded-lg transition-colors disabled:opacity-40"
-                style={{ color: 'var(--color-danger)' }}
+                className="flex items-center justify-center disabled:opacity-40"
+                style={{ color: '#0BB5C7' }}
               >
-                {removingId === s.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                {removingId === s.id ? <Loader2 size={10} className="animate-spin" /> : <X size={10} />}
               </button>
             </div>
           ))
@@ -128,17 +139,22 @@ export default function SubjectsManager({ classId, initialSubjects }: Props) {
               <div className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--color-text-muted)', borderBottom: '1px solid var(--color-border)' }}>
                 Existing subjects
               </div>
-              {suggestions.map(name => (
+              {suggestions.map(s => (
                 <button
-                  key={name}
+                  key={s.name}
                   type="button"
-                  onMouseDown={() => pickSuggestion(name)}
-                  className="w-full text-left px-3 py-2 text-sm transition-colors"
-                  style={{ color: 'var(--color-text-primary)' }}
+                  onMouseDown={() => pickSuggestion(s.name, s.alreadyAdded)}
+                  className="w-full text-left px-3 py-2 text-sm transition-colors flex items-center justify-between"
+                  style={{ color: s.alreadyAdded ? 'var(--color-text-muted)' : 'var(--color-text-primary)' }}
                   onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(11,181,199,0.08)')}
                   onMouseLeave={e => (e.currentTarget.style.backgroundColor = '')}
                 >
-                  {name}
+                  <span>{s.name}</span>
+                  {s.alreadyAdded && (
+                    <span className="text-xs px-1.5 py-0.5 rounded" style={{ backgroundColor: 'rgba(11,181,199,0.1)', color: '#0BB5C7' }}>
+                      Added
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -154,6 +170,9 @@ export default function SubjectsManager({ classId, initialSubjects }: Props) {
           Add
         </button>
       </div>
+      {alreadyAddedError && (
+        <p className="mt-1.5 text-xs" style={{ color: 'var(--color-danger)' }}>{alreadyAddedError}</p>
+      )}
     </div>
   )
 }

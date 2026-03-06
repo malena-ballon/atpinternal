@@ -9,6 +9,8 @@ import OverallTab from './insights/OverallTab'
 import PerStudentTab from './insights/PerStudentTab'
 import PerExamTab from './insights/PerExamTab'
 import PerSchoolTab from './insights/PerSchoolTab'
+import PerSubjectTab from './insights/PerSubjectTab'
+import CustomExportTab from './insights/CustomExportTab'
 import EmailReportsModal from './EmailReportsModal'
 
 // ── Shared math helpers ──────────────────────────────────────────────────────
@@ -85,7 +87,9 @@ const TABS = [
   { id: 'overall' as const, label: 'Overall Class' },
   { id: 'student' as const, label: 'Per Student' },
   { id: 'exam' as const, label: 'Per Exam' },
+  { id: 'subject' as const, label: 'Per Subject' },
   { id: 'school' as const, label: 'Per School' },
+  { id: 'export' as const, label: 'Custom PDF Export' },
 ]
 
 
@@ -94,7 +98,7 @@ export default function PerformanceInsights({ className, classId, exams, classSt
   const effectiveAtRisk = atRiskThreshold ?? classPassingPct
   const [allScores, setAllScores] = useState<ScoreRow[]>([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<'overall' | 'student' | 'exam' | 'school'>('overall')
+  const [activeTab, setActiveTab] = useState<'overall' | 'student' | 'exam' | 'subject' | 'school' | 'export'>('overall')
   const [showEmailModal, setShowEmailModal] = useState(false)
 
   useEffect(() => {
@@ -311,8 +315,27 @@ export default function PerformanceInsights({ className, classId, exams, classSt
           classPassingPct={classPassingPct}
         />
       )}
+      {activeTab === 'subject' && (
+        <PerSubjectTab
+          className={className}
+          examStats={examStats}
+          studentStats={studentStats}
+          classPassingPct={classPassingPct}
+        />
+      )}
       {activeTab === 'school' && (
         <PerSchoolTab className={className} schoolStats={schoolStats} sortedExams={sortedExams} />
+      )}
+      {activeTab === 'export' && (
+        <CustomExportTab
+          className={className}
+          classPassingPct={classPassingPct}
+          classOverTime={classOverTime}
+          studentStats={studentStats}
+          examStats={examStats}
+          schoolStats={schoolStats}
+          sortedExams={sortedExams}
+        />
       )}
     </div>
   )

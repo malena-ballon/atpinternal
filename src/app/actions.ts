@@ -11,6 +11,30 @@ export async function signOut() {
   redirect('/login')
 }
 
+// ── Teacher approval ───────────────────────────────────────────────────────────
+export async function approveUser(userId: string): Promise<{ ok: boolean; error?: string }> {
+  const supabase = createServiceClient()
+  const { data: u } = await supabase.from('users').select('name, email').eq('id', userId).single()
+  if (!u) return { ok: false, error: 'User not found' }
+  const { error } = await supabase.from('users').update({ status: 'active' }).eq('id', userId)
+  if (error) return { ok: false, error: error.message }
+  // Link existing teacher row by email, or create one
+  const { data: existing } = await supabase.from('teachers').select('id').eq('email', u.email).maybeSingle()
+  if (existing) {
+    await supabase.from('teachers').update({ user_id: userId }).eq('id', existing.id)
+  } else {
+    await supabase.from('teachers').insert({ user_id: userId, name: u.name, email: u.email })
+  }
+  return { ok: true }
+}
+
+export async function rejectUser(userId: string): Promise<{ ok: boolean; error?: string }> {
+  const supabase = createServiceClient()
+  const { error } = await supabase.from('users').update({ status: 'rejected' }).eq('id', userId)
+  if (error) return { ok: false, error: error.message }
+  return { ok: true }
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function fmtTime(t: string) {
   const [h, m] = t.split(':')
@@ -81,18 +105,108 @@ export async function sendTeacherSessionEmail(sessionIds: string[]): Promise<{ s
   </div>
 </body></html>`
     try {
-      await resend.emails.send({
+      const { error } = await resend.emails.send({
         from: FROM_EMAIL,
         to: teacher.email,
         subject: `New Sessions Assigned – ${(teacherSessions[0] as { classes?: { name: string }[] | null }).classes?.[0]?.name ?? 'ATP'}`,
         html,
       })
-      sent++
+      if (error) console.error('[sendTeacherSessionEmail] Resend error for', teacher.email, error)
+      else sent++
     } catch (e) {
       console.error('[sendTeacherSessionEmail] failed for', teacher.email, e)
     }
   }
   return { sent }
+}
+
+// ── Send session schedule to a student ────────────────────────────────────────
+export async function emailSessionSchedule(
+  studentId: string,
+  classId: string,
+  sessionIds?: string[],
+): Promise<{ ok: boolean; skipped: boolean; error?: string }> {
+  const supabase = createServiceClient()
+
+  const { data: student } = await supabase
+    .from('students')
+    .select('id, name, email')
+    .eq('id', studentId)
+    .single()
+  if (!student) return { ok: false, skipped: false, error: 'Student not found' }
+  if (!student.email) return { ok: false, skipped: true }
+
+  const { data: cls } = await supabase.from('classes').select('name').eq('id', classId).single()
+  const className = cls?.name ?? 'Class'
+
+  let query = supabase
+    .from('sessions')
+    .select('id, date, start_time, end_time, status, subjects(name), teachers(name)')
+    .eq('class_id', classId)
+    .order('date')
+    .order('start_time')
+  if (sessionIds && sessionIds.length > 0) query = query.in('id', sessionIds)
+  const { data: sessions } = await query
+
+  try {
+    const { renderToBuffer } = await import('@react-pdf/renderer')
+    const { default: SessionSchedulePDF } = await import('./dashboard/classes/[id]/components/pdf/SessionSchedulePDF')
+    const React = await import('react')
+
+    const rows = (sessions ?? []).map((s, i) => {
+      const d = s.date
+      let day = '—'
+      try { day = new Date(d + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' }) } catch {}
+      const teacher = (s as any).teachers?.name ?? (s as any).teachers?.[0]?.name ?? '—'
+      const subject = (s as any).subjects?.name ?? (s as any).subjects?.[0]?.name ?? '—'
+      return {
+        index: i + 1,
+        date: d ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—',
+        day,
+        startTime: s.start_time?.slice(0, 5) ?? '',
+        endTime: s.end_time?.slice(0, 5) ?? '',
+        teacher,
+        subject,
+        status: s.status,
+      }
+    })
+
+    const buffer = await renderToBuffer(
+      React.createElement(SessionSchedulePDF, { className, sessions: rows }) as any
+    )
+
+    const today = new Date().toISOString().slice(0, 10)
+    const safeName = student.name.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '')
+
+    const { error: sendError } = await resend.emails.send({
+      from: FROM_EMAIL,
+      to: student.email,
+      subject: `Session Schedule – ${className}`,
+      html: `
+<div style="font-family:system-ui,sans-serif;padding:24px;max-width:480px;margin:0 auto;">
+  <div style="background:#0BB5C7;padding:16px 20px;border-radius:8px 8px 0 0;">
+    <span style="color:#fff;font-size:16px;font-weight:700;">Session Schedule</span>
+  </div>
+  <div style="padding:20px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;">
+    <p style="margin:0 0 12px;color:#374151;">Hi <strong>${student.name}</strong>,</p>
+    <p style="margin:0 0 16px;color:#374151;">Please find the session schedule for <strong>${className}</strong> attached.</p>
+    <p style="margin:0;font-size:12px;color:#9ca3af;">Sent by Acadgenius Tutorial Powerhouse.</p>
+  </div>
+</div>`,
+      attachments: [{
+        filename: `${safeName}_${className.replace(/\s+/g, '-')}_schedule_${today}.pdf`,
+        content: buffer,
+      }],
+    })
+    if (sendError) {
+      console.error('[emailSessionSchedule] Resend error', sendError)
+      return { ok: false, skipped: false, error: sendError.message }
+    }
+    return { ok: true, skipped: false }
+  } catch (e) {
+    console.error('[emailSessionSchedule] failed', e)
+    return { ok: false, skipped: false, error: String(e) }
+  }
 }
 
 // ── Send student PDF report ────────────────────────────────────────────────────
@@ -191,7 +305,7 @@ export async function emailStudentReport(
     const today = new Date().toISOString().slice(0, 10)
     const safeName = student.name.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '')
 
-    await resend.emails.send({
+    const { error: sendError } = await resend.emails.send({
       from: FROM_EMAIL,
       to: student.email,
       subject: `Your Performance Report – ${className}`,
@@ -211,6 +325,10 @@ export async function emailStudentReport(
         content: buffer,
       }],
     })
+    if (sendError) {
+      console.error('[emailStudentReport] Resend error', sendError)
+      return { ok: false, skipped: false, error: sendError.message }
+    }
     return { ok: true, skipped: false }
   } catch (e) {
     console.error('[emailStudentReport] failed', e)

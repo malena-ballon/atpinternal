@@ -96,7 +96,7 @@ export default async function DashboardPage() {
       {/* Page header */}
       <div>
         <h1 className="text-2xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
-          Operational Overview
+          Dashboard
         </h1>
         <p className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
           Real-time metrics and upcoming sessions for Acadgenius
