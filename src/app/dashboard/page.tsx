@@ -99,7 +99,7 @@ export default async function DashboardPage() {
           Dashboard
         </h1>
         <p className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
-          Real-time metrics and upcoming sessions for Acadgenius
+          Real-time metrics and upcoming sessions for ATP.
         </p>
       </div>
 

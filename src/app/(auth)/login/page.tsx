@@ -77,6 +77,9 @@ export default function LoginPage() {
         <p className="text-brand-cyan-soft text-sm font-medium tracking-widest uppercase">
           Acadgenius Tutorial Powerhouse
         </p>
+        <p className="text-white text-xs">
+          est. 2024
+        </p>
       </div>
 
       {/* Card */}
