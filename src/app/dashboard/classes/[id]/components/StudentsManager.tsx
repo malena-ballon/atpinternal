@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import { Plus, Trash2, Loader2, Check, Upload, Download, Pencil, Search, X } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 import type { StudentRow } from '@/types'
@@ -67,6 +68,7 @@ function applyCellValue(row: DraftRow, c: number, raw: string) {
 // ─── Component ─────────────────────────────────────────────────────────────────
 
 export default function StudentsManager({ classId, initialStudents }: Props) {
+  const router = useRouter()
   const [rows, setRows] = useState<DraftRow[]>(() =>
     [...initialStudents].sort((a, b) => a.name.localeCompare(b.name)).map(studentToRow)
   )
@@ -256,6 +258,7 @@ export default function StudentsManager({ classId, initialStudents }: Props) {
       setDeletedIds(new Set())
       setSaved(true); setTimeout(() => setSaved(false), 2500)
       setEditMode(false)
+      router.refresh()
     } catch (err: unknown) {
       setSaveError(err instanceof Error ? err.message : 'Save failed')
     } finally {
