@@ -121,7 +121,8 @@ export default function Sidebar({ name, role }: Props) {
         <form action={signOut}>
           <button
             type="submit"
-            className="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl transition-all text-sm font-medium"
+            // Look at the new 'active:' classes added right here!
+            className="cursor-pointer hover:bg-white/10 hover:text-white active:scale-95 active:bg-white/20 flex items-center gap-3 w-full px-3 py-2.5 rounded-xl transition-all duration-200 text-sm font-medium"
             style={{ color: 'rgba(255,255,255,0.65)' }}
           >
             <LogOut size={18} strokeWidth={2} />
