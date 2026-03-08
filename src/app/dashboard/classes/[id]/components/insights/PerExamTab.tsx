@@ -29,17 +29,86 @@ const selectStyle: React.CSSProperties = {
 
 export default function PerExamTab({ className, examStats, classPassingPct }: Props) {
   const [selectedId, setSelectedId] = useState<string>(examStats[0]?.exam.id ?? '')
+  
+  // NEW STATES FOR EXPORT MODAL
+  const [showExportModal, setShowExportModal] = useState(false)
+  const [exportSelection, setExportSelection] = useState<string[]>([])
+  const [isExporting, setIsExporting] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+
   const stats = examStats.find(s => s.exam.id === selectedId)
 
-  async function handleExport() {
-    if (!stats) return
-    const { pdf } = await import('@react-pdf/renderer')
-    const { default: ExamReportPDF } = await import('../pdf/ExamReportPDF')
-    const blob = await pdf(
-      <ExamReportPDF className={className} stats={stats} classPassingPct={classPassingPct} />
-    ).toBlob()
-    const safeName = stats.exam.name.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '')
-    downloadBlob(blob, pdfFileName(`${className}_${safeName}`, 'Exam-Report'))
+  // Filter exams based on search query
+  const filteredExams = examStats.filter(s => 
+    s.exam.name.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+
+  // UPDATED EXPORT FUNCTION: Zips all selected Exam PDFs into one file
+// UPDATED EXPORT FUNCTION: Single PDF directly, Multiple zipped
+  async function handleMultiExport() {
+    if (exportSelection.length === 0) return
+    setIsExporting(true)
+    
+    try {
+      const { pdf } = await import('@react-pdf/renderer')
+      const { default: ExamReportPDF } = await import('../pdf/ExamReportPDF')
+      
+      // --- LOGIC 1: SINGLE PDF EXPORT ---
+      if (exportSelection.length === 1) {
+        const examStat = examStats.find(s => s.exam.id === exportSelection[0])
+        if (!examStat) throw new Error("Exam not found")
+
+        const blob = await pdf(
+          <ExamReportPDF 
+            className={className} 
+            stats={examStat} 
+            classPassingPct={classPassingPct} 
+          />
+        ).toBlob()
+        
+        const safeName = examStat.exam.name.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '')
+        const fileName = pdfFileName(`${className}_${safeName}`, 'Exam-Report')
+        
+        // Download the single PDF directly
+        downloadBlob(blob, fileName)
+      } 
+      // --- LOGIC 2: MULTIPLE PDFS (ZIP EXPORT) ---
+      else {
+        const JSZip = (await import('jszip')).default
+        const zip = new JSZip()
+        const folderName = `${className.replace(/\s+/g, '_')}_Exam_Reports`
+        const reportsFolder = zip.folder(folderName)
+
+        // Generate PDFs and add them to the zip folder
+        for (const id of exportSelection) {
+          const examStat = examStats.find(s => s.exam.id === id)
+          if (!examStat) continue
+
+          const blob = await pdf(
+            <ExamReportPDF 
+              className={className} 
+              stats={examStat} 
+              classPassingPct={classPassingPct} 
+            />
+          ).toBlob()
+          
+          const safeName = examStat.exam.name.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '')
+          const fileName = pdfFileName(`${className}_${safeName}`, 'Exam-Report')
+          
+          reportsFolder?.file(fileName, blob)
+        }
+
+        // Generate and download the final zip file
+        const zipBlob = await zip.generateAsync({ type: 'blob' })
+        downloadBlob(zipBlob, `${folderName}.zip`)
+      }
+
+    } catch (error) {
+      console.error("Export failed:", error)
+    } finally {
+      setIsExporting(false)
+      setShowExportModal(false)
+    }
   }
 
   const effectivePassing = stats ? (stats.exam.passing_pct_override ?? classPassingPct) : classPassingPct
@@ -65,6 +134,97 @@ export default function PerExamTab({ className, examStats, classPassingPct }: Pr
 
   return (
     <div className="space-y-4">
+      {/* EXPORT MODAL UI */}
+      {showExportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div 
+            className="w-full max-w-md rounded-2xl p-5 shadow-2xl flex flex-col max-h-[80vh]" 
+            style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+          >
+            <h2 className="text-lg font-bold mb-4" style={{ color: 'var(--color-text-primary)' }}>Export Exam Reports</h2>
+
+            {/* Search Bar */}
+            <div className="mb-4">
+              <input
+                type="text"
+                placeholder="Search exams..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full px-3 py-2 text-sm rounded-xl focus:ring-2 focus:ring-[#0BB5C7] transition-all"
+                style={{ 
+                  backgroundColor: 'var(--color-bg)', 
+                  color: 'var(--color-text-primary)', 
+                  border: '1px solid var(--color-border)', 
+                  outline: 'none' 
+                }}
+              />
+            </div>
+
+            <div className="flex gap-2 mb-4">
+              <button 
+                onClick={() => {
+                  const newSelection = new Set(exportSelection)
+                  filteredExams.forEach(s => newSelection.add(s.exam.id))
+                  setExportSelection(Array.from(newSelection))
+                }} 
+                className="text-xs font-medium px-3 py-1.5 rounded-lg bg-[#0BB5C7]/10 text-[#0BB5C7] hover:bg-[#0BB5C7]/20 transition-colors"
+              >
+                Select All
+              </button>
+              <button 
+                onClick={() => setExportSelection([])} 
+                className="text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
+                style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-muted)', border: '1px solid var(--color-border)' }}
+              >
+                Clear All
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto mb-4 space-y-1.5 pr-2">
+              {filteredExams.length > 0 ? (
+                filteredExams.map(s => (
+                  <label key={s.exam.id} className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-white/5 cursor-pointer transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={exportSelection.includes(s.exam.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) setExportSelection(prev => [...prev, s.exam.id])
+                        else setExportSelection(prev => prev.filter(id => id !== s.exam.id))
+                      }}
+                      className="w-4 h-4 rounded border-gray-400 accent-[#0BB5C7] cursor-pointer"
+                    />
+                    <span className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
+                      {s.exam.name}
+                    </span>
+                  </label>
+                ))
+              ) : (
+                <p className="text-sm text-center py-4" style={{ color: 'var(--color-text-muted)' }}>
+                  No exams match your search.
+                </p>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 mt-auto pt-4" style={{ borderTop: '1px solid var(--color-border)' }}>
+              <button 
+                onClick={() => setShowExportModal(false)} 
+                className="px-4 py-2 text-sm font-medium rounded-xl hover:bg-white/5 transition-colors" 
+                style={{ color: 'var(--color-text-muted)' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleMultiExport}
+                disabled={exportSelection.length === 0 || isExporting}
+                className="px-4 py-2 text-sm font-medium rounded-xl bg-[#0BB5C7] text-white hover:bg-[#099aa8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {isExporting ? 'Exporting...' : `Export Selected (${exportSelection.length})`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Selector + export */}
       <div className="flex items-end gap-3">
         <div className="flex-1">
@@ -75,7 +235,15 @@ export default function PerExamTab({ className, examStats, classPassingPct }: Pr
             ))}
           </select>
         </div>
-        {stats && <ExportButton onExport={handleExport} label="Export Exam Report" />}
+        {stats && (
+          <ExportButton 
+            onExport={async () => {
+              setExportSelection([selectedId])
+              setShowExportModal(true)
+            }} 
+            label="Export Exam Reports" 
+          />
+        )}
       </div>
 
       {stats && (
