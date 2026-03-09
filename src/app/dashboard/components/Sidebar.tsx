@@ -10,6 +10,7 @@ import {
   Users,
   BookMarked,
   LogOut,
+  HeartIcon,
 } from 'lucide-react'
 import { signOut } from '@/app/actions'
 
@@ -99,7 +100,7 @@ export default function Sidebar({ name, role }: Props) {
               {name}
             </p>
             <p className="text-xs truncate" style={{ color: 'rgba(255,255,255,0.5)' }}>
-              {role === 'admin' ? 'Dashboard Control' : 'Teacher'}
+              {role === 'admin' ? 'Admin' : 'Teacher'}
             </p>
           </div>
         </div>
@@ -112,7 +113,10 @@ export default function Sidebar({ name, role }: Props) {
         <NavItem href="/dashboard/classes" icon={BookOpen} label="Classes" />
         <NavItem href="/dashboard/teachers" icon={Users} label="Teachers" />
         {role === 'admin' && (
-          <NavItem href="/dashboard/notebook" icon={BookMarked} label="Notebook" />
+          <>
+            <NavItem href="/dashboard/notebook" icon={BookMarked} label="Notebook" />
+            <NavItem href="/dashboard/malenapage" icon={HeartIcon} label="Malena" />
+          </>
         )}
       </nav>
 
