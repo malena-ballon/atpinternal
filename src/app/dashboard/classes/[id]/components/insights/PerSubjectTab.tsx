@@ -7,18 +7,44 @@ import {
 } from 'recharts'
 import { calcMean, calcMedian, calcStdDev } from '../PerformanceInsights'
 import type { ExamStats, StudentStats } from '../PerformanceInsights'
+import type { ScoreRow, SubjectRow } from '@/types'
 import ExportButton, { downloadBlob, pdfFileName } from '../pdf/ExportButton'
+
+function getSubjectPct(score: ScoreRow, subjectId: string | undefined): number {
+  if (!subjectId) return score.percentage
+  const ss = score.subject_scores?.find(x => x.subject_id === subjectId)
+  return ss ? Math.round((ss.raw_score / ss.total_items) * 10000) / 100 : score.percentage
+}
+
+function filterExamsBySubject(examStats: ExamStats[], subjectName: string, subjectId: string | undefined) {
+  return examStats.filter(es => {
+    const ids = es.exam.subject_ids?.length
+      ? es.exam.subject_ids
+      : es.exam.subject_id ? [es.exam.subject_id] : []
+    if (subjectId && ids.includes(subjectId)) return true
+    return es.exam.subjects?.name === subjectName
+  })
+}
 
 interface Props {
   className: string
   examStats: ExamStats[]
   studentStats: StudentStats[]
   classPassingPct: number
+  subjects?: SubjectRow[]
 }
 
-// Build subject list from examStats (exclude Assessment)
-function buildSubjectList(examStats: ExamStats[]) {
+// Build subject list: merge passed subjects with those derived from examStats (exclude Assessment)
+function buildSubjectList(examStats: ExamStats[], passedSubjects?: SubjectRow[]) {
   const seen = new Map<string, string>() // name → name (dedup)
+  // First include all passed subjects (from SubjectsManager), excluding Assessment
+  if (passedSubjects) {
+    for (const s of passedSubjects) {
+      if (s.name.toLowerCase() === 'assessment') continue
+      seen.set(s.name, s.name)
+    }
+  }
+  // Then include subjects found on exams (in case some aren't in the class subjects list)
   for (const es of examStats) {
     const name = es.exam.subjects?.name
     if (!name || name.toLowerCase() === 'assessment') continue
@@ -27,9 +53,14 @@ function buildSubjectList(examStats: ExamStats[]) {
   return Array.from(seen.keys())
 }
 
-export default function PerSubjectTab({ className, examStats, studentStats, classPassingPct }: Props) {
-  const subjects = useMemo(() => buildSubjectList(examStats), [examStats])
+export default function PerSubjectTab({ className, examStats, studentStats, classPassingPct, subjects: passedSubjects }: Props) {
+  const subjects = useMemo(() => buildSubjectList(examStats, passedSubjects), [examStats, passedSubjects])
   const [selected, setSelected] = useState<string>(() => subjects[0] ?? '')
+
+  const subjectId = useMemo(
+    () => passedSubjects?.find(s => s.name === selected)?.id,
+    [passedSubjects, selected]
+  )
 
   // NEW STATES FOR EXPORT MODAL
   const [showExportModal, setShowExportModal] = useState(false)
@@ -42,38 +73,44 @@ export default function PerSubjectTab({ className, examStats, studentStats, clas
   )
 
   const subjectExamStats = useMemo(
-    () => examStats.filter(es => es.exam.subjects?.name === selected),
-    [examStats, selected]
+    () => filterExamsBySubject(examStats, selected, subjectId),
+    [examStats, selected, subjectId]
   )
 
-  // Aggregated scores for the selected subject
-  const allScores = useMemo(() => subjectExamStats.flatMap(es => es.scores), [subjectExamStats])
-  const pcts = useMemo(() => allScores.map(s => s.percentage), [allScores])
+  // Aggregated scores with subject-specific percentages
+  const allScores = useMemo(
+    () => subjectExamStats.flatMap(es => es.scores),
+    [subjectExamStats]
+  )
+  const pcts = useMemo(() => allScores.map(s => getSubjectPct(s, subjectId)), [allScores, subjectId])
   const avg = pcts.length > 0 ? calcMean(pcts) : 0
   const median = pcts.length > 0 ? calcMedian(pcts) : 0
   const stdDev = pcts.length > 0 ? calcStdDev(pcts) : 0
-  const passCount = allScores.filter(s => s.percentage >= classPassingPct).length
-  const passRate = allScores.length > 0 ? (passCount / allScores.length) * 100 : 0
+  const passCount = pcts.filter(p => p >= classPassingPct).length
+  const passRate = pcts.length > 0 ? (passCount / pcts.length) * 100 : 0
 
-  // Per-exam trend for this subject (avg over time)
+  // Per-exam trend using subject-specific scores
   const trendData = useMemo(() =>
-    subjectExamStats.map(es => ({
-      name: es.exam.name.length > 18 ? es.exam.name.slice(0, 16) + '…' : es.exam.name,
-      fullName: es.exam.name,
-      avg: parseFloat(es.avg.toFixed(1)),
-      passRate: es.scores.length > 0 ? parseFloat((es.passCount / es.scores.length * 100).toFixed(1)) : 0,
-    })),
-    [subjectExamStats]
+    subjectExamStats.map(es => {
+      const spcts = es.scores.map(s => getSubjectPct(s, subjectId))
+      const examAvg = spcts.length > 0 ? calcMean(spcts) : 0
+      const examPass = spcts.filter(p => p >= classPassingPct).length
+      return {
+        name: es.exam.name.length > 18 ? es.exam.name.slice(0, 16) + '…' : es.exam.name,
+        fullName: es.exam.name,
+        avg: parseFloat(examAvg.toFixed(1)),
+        passRate: spcts.length > 0 ? parseFloat((examPass / spcts.length * 100).toFixed(1)) : 0,
+      }
+    }),
+    [subjectExamStats, subjectId, classPassingPct]
   )
 
-  // Per-student average for this subject
+  // Per-student average using subject-specific scores
   const studentSubjectStats = useMemo(() => {
+    const examIds = new Set(subjectExamStats.map(es => es.exam.id))
     return studentStats.map(st => {
-      const scores = st.scores.filter(s => {
-        const es = subjectExamStats.find(e => e.exam.id === s.exam_id)
-        return !!es
-      })
-      const spcts = scores.map(s => s.percentage)
+      const scores = st.scores.filter(s => examIds.has(s.exam_id))
+      const spcts = scores.map(s => getSubjectPct(s, subjectId))
       return {
         name: st.student.name,
         id: st.student.id,
@@ -83,7 +120,7 @@ export default function PerSubjectTab({ className, examStats, studentStats, clas
     }).filter(s => s.avg !== null).sort((a, b) => (b.avg ?? 0) - (a.avg ?? 0)) as {
       name: string; id: string; avg: number; examsTaken: number
     }[]
-  }, [studentStats, subjectExamStats])
+  }, [studentStats, subjectExamStats, subjectId])
 
 
   // UPDATED EXPORT FUNCTION: Zips all selected Subject PDFs into one file
@@ -98,19 +135,21 @@ export default function PerSubjectTab({ className, examStats, studentStats, clas
       
       // HELPER: Calculates the stats for a given subject to avoid duplicating math
       const getStatsForSubject = (subjectName: string) => {
-        const subjExams = examStats.filter(es => es.exam.subjects?.name === subjectName)
+        const subjId = passedSubjects?.find(s => s.name === subjectName)?.id
+        const subjExams = filterExamsBySubject(examStats, subjectName, subjId)
         const subjScores = subjExams.flatMap(es => es.scores)
-        const subjPcts = subjScores.map(s => s.percentage)
-        
+        const subjPcts = subjScores.map(s => getSubjectPct(s, subjId))
+
         const subjAvg = subjPcts.length > 0 ? calcMean(subjPcts) : 0
         const subjMedian = subjPcts.length > 0 ? calcMedian(subjPcts) : 0
         const subjStdDev = subjPcts.length > 0 ? calcStdDev(subjPcts) : 0
-        const subjPassCount = subjScores.filter(s => s.percentage >= classPassingPct).length
-        const subjPassRate = subjScores.length > 0 ? (subjPassCount / subjScores.length) * 100 : 0
+        const subjPassCount = subjPcts.filter(p => p >= classPassingPct).length
+        const subjPassRate = subjPcts.length > 0 ? (subjPassCount / subjPcts.length) * 100 : 0
 
+        const subjExamIds = new Set(subjExams.map(e => e.exam.id))
         const subjStudentStats = studentStats.map(st => {
-          const scores = st.scores.filter(s => subjExams.find(e => e.exam.id === s.exam_id))
-          const spcts = scores.map(s => s.percentage)
+          const scores = st.scores.filter(s => subjExamIds.has(s.exam_id))
+          const spcts = scores.map(s => getSubjectPct(s, subjId))
           return {
             name: st.student.name,
             id: st.student.id,
@@ -404,29 +443,35 @@ export default function PerSubjectTab({ className, examStats, studentStats, clas
                 </thead>
                 <tbody>
                   {subjectExamStats.map((es, i) => {
-                    const pr = es.scores.length > 0 ? (es.passCount / es.scores.length * 100) : 0
+                    const spcts = es.scores.map(s => getSubjectPct(s, subjectId))
+                    const sAvg = spcts.length > 0 ? calcMean(spcts) : 0
+                    const sMedian = calcMedian(spcts)
+                    const sStdDev = calcStdDev(spcts)
+                    const sPass = spcts.filter(p => p >= classPassingPct).length
+                    const pr = spcts.length > 0 ? sPass / spcts.length * 100 : 0
+                    const byPct = es.scores.map((s, si) => ({ name: s.students?.name ?? '—', pct: spcts[si] })).sort((a, b) => b.pct - a.pct)
                     return (
                       <tr key={es.exam.id} style={{ borderBottom: i < subjectExamStats.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
                         <td className="px-3 py-2.5 font-medium text-xs" style={{ color: 'var(--color-text-primary)', maxWidth: 160 }}>
                           {es.exam.name}
                         </td>
-                        <td className="px-3 py-2.5 text-xs font-mono" style={{ color: es.avg >= classPassingPct ? '#0BB5C7' : '#ef4444' }}>
-                          {es.avg.toFixed(1)}%
+                        <td className="px-3 py-2.5 text-xs font-mono" style={{ color: sAvg >= classPassingPct ? '#0BB5C7' : '#ef4444' }}>
+                          {sAvg.toFixed(1)}%
                         </td>
                         <td className="px-3 py-2.5 text-xs font-mono" style={{ color: 'var(--color-text-secondary)' }}>
-                          {es.median.toFixed(1)}%
+                          {sMedian.toFixed(1)}%
                         </td>
                         <td className="px-3 py-2.5 text-xs font-mono" style={{ color: 'var(--color-text-muted)' }}>
-                          ±{es.stdDev.toFixed(1)}%
+                          ±{sStdDev.toFixed(1)}%
                         </td>
                         <td className="px-3 py-2.5 text-xs font-mono" style={{ color: pr >= 60 ? '#22c55e' : '#ef4444' }}>
                           {pr.toFixed(0)}%
                         </td>
                         <td className="px-3 py-2.5 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-                          {es.highest ? `${es.highest.name} (${es.highest.pct.toFixed(0)}%)` : '—'}
+                          {byPct[0] ? `${byPct[0].name} (${byPct[0].pct.toFixed(0)}%)` : '—'}
                         </td>
                         <td className="px-3 py-2.5 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-                          {es.lowest ? `${es.lowest.name} (${es.lowest.pct.toFixed(0)}%)` : '—'}
+                          {byPct[byPct.length - 1] ? `${byPct[byPct.length - 1].name} (${byPct[byPct.length - 1].pct.toFixed(0)}%)` : '—'}
                         </td>
                         <td className="px-3 py-2.5 text-xs" style={{ color: 'var(--color-text-muted)' }}>
                           {es.scores.length}

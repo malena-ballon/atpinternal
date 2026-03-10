@@ -1,7 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus, FileText, Upload, Pencil, ChevronDown, ChevronRight } from 'lucide-react'
+import { Plus, FileText, Upload, Pencil, ChevronDown, ChevronRight, Trash2, Loader2 } from 'lucide-react'
+import { createClient } from '@/utils/supabase/client'
 import type { ExamRow, ScoreRow, SubjectRow, StudentRow } from '@/types'
 import ExamFormModal from './ExamFormModal'
 import BulkScoreModal from './BulkScoreModal'
@@ -15,21 +16,30 @@ interface Props {
   classStudents: StudentRow[]
   onExamSaved: (exam: ExamRow) => void
   onExamTotalItemsUpdate: (examId: string, totalItems: number) => void
+  onExamsDeleted?: (ids: string[]) => void
 }
 
-export default function ExamsManager({ classId, classPassingPct, exams, subjects, classStudents, onExamSaved, onExamTotalItemsUpdate }: Props) {
+export default function ExamsManager({ classId, classPassingPct, exams, subjects, classStudents, onExamSaved, onExamTotalItemsUpdate, onExamsDeleted }: Props) {
   const [showFormModal, setShowFormModal] = useState(false)
   const [editTarget, setEditTarget] = useState<ExamRow | null>(null)
   const [scoreModalExam, setScoreModalExam] = useState<ExamRow | null>(null)
   const [expandedExamId, setExpandedExamId] = useState<string | null>(null)
   const [importedScores, setImportedScores] = useState<Record<string, ScoreRow[]>>({})
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [deletingSelected, setDeletingSelected] = useState(false)
+  const [fromCreateExam, setFromCreateExam] = useState<ExamRow | null>(null)
 
   function handleExamSaved(saved: ExamRow) {
     const isNew = !exams.find(e => e.id === saved.id)
     onExamSaved(saved)
     setShowFormModal(false)
     setEditTarget(null)
-    if (isNew) setScoreModalExam(saved)
+    if (isNew) {
+      setFromCreateExam(saved)
+      setScoreModalExam(saved)
+    } else {
+      setFromCreateExam(null)
+    }
   }
 
   function handleScoresImported(examId: string, scores: ScoreRow[], detectedTotalItems: number) {
@@ -48,22 +58,67 @@ export default function ExamsManager({ classId, classPassingPct, exams, subjects
     setExpandedExamId(prev => prev === examId ? null : examId)
   }
 
+  function toggleSelectId(id: string) {
+    setSelectedIds(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next })
+  }
+
+  function toggleSelectAll() {
+    setSelectedIds(prev => prev.size === exams.length ? new Set() : new Set(exams.map(e => e.id)))
+  }
+
+  async function handleDeleteSelected() {
+    if (selectedIds.size === 0) return
+    if (!window.confirm(`Delete ${selectedIds.size} exam${selectedIds.size !== 1 ? 's' : ''}? This will also remove all scores for these exams. This cannot be undone.`)) return
+    setDeletingSelected(true)
+    const supabase = createClient()
+    await supabase.from('exams').delete().in('id', Array.from(selectedIds))
+    onExamsDeleted?.(Array.from(selectedIds))
+    setSelectedIds(new Set())
+    setDeletingSelected(false)
+  }
+
   const effectivePct = (exam: ExamRow) => exam.passing_pct_override ?? classPassingPct
 
   return (
     <div className="space-y-3">
       {/* Toolbar */}
       <div className="flex items-center justify-between">
-        <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-          {exams.length} exam{exams.length !== 1 ? 's' : ''}
-        </span>
-        <button
-          onClick={() => { setEditTarget(null); setShowFormModal(true) }}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg text-white"
-          style={{ backgroundColor: '#0BB5C7' }}
-        >
-          <Plus size={13} /> Add Exam
-        </button>
+        <div className="flex items-center gap-2">
+          <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+            {exams.length} exam{exams.length !== 1 ? 's' : ''}
+          </span>
+          {exams.length > 0 && (
+            <label className="flex items-center gap-1.5 text-xs cursor-pointer" style={{ color: 'var(--color-text-muted)' }}>
+              <input
+                type="checkbox"
+                checked={exams.length > 0 && selectedIds.size === exams.length}
+                onChange={toggleSelectAll}
+                style={{ accentColor: '#0BB5C7' }}
+              />
+              All
+            </label>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {selectedIds.size > 0 && (
+            <button
+              onClick={handleDeleteSelected}
+              disabled={deletingSelected}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg disabled:opacity-60"
+              style={{ backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', color: 'var(--color-danger)' }}
+            >
+              {deletingSelected ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
+              Delete {selectedIds.size}
+            </button>
+          )}
+          <button
+            onClick={() => { setEditTarget(null); setShowFormModal(true) }}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg text-white"
+            style={{ backgroundColor: '#0BB5C7' }}
+          >
+            <Plus size={13} /> Add Exam
+          </button>
+        </div>
       </div>
 
       {/* Empty state */}
@@ -79,14 +134,23 @@ export default function ExamsManager({ classId, classPassingPct, exams, subjects
           {exams.map((exam, i) => {
             const isExpanded = expandedExamId === exam.id
             const scores = importedScores[exam.id]
+            const isSelected = selectedIds.has(exam.id)
 
             return (
               <div key={exam.id} style={{ borderBottom: i < exams.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
                 {/* Exam row */}
                 <div
                   className="flex items-center gap-3 px-4 py-3"
-                  style={{ backgroundColor: 'var(--color-surface)' }}
+                  style={{ backgroundColor: isSelected ? 'rgba(61,212,230,0.04)' : 'var(--color-surface)' }}
                 >
+                  {/* Checkbox */}
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => toggleSelectId(exam.id)}
+                    style={{ accentColor: '#0BB5C7', flexShrink: 0 }}
+                  />
+
                   {/* Expand toggle */}
                   <button
                     onClick={() => toggleExpand(exam.id)}
@@ -189,7 +253,13 @@ export default function ExamsManager({ classId, classPassingPct, exams, subjects
           classStudents={classStudents}
           classPassingPct={classPassingPct}
           subjects={subjects.filter(s => s.name.toLowerCase() !== 'assessment')}
-          onClose={() => setScoreModalExam(null)}
+          onClose={() => { setScoreModalExam(null); setFromCreateExam(null) }}
+          onBack={fromCreateExam ? () => {
+            setScoreModalExam(null)
+            setFromCreateExam(null)
+            setEditTarget(fromCreateExam)
+            setShowFormModal(true)
+          } : undefined}
           onImported={(scores, totalItems) => handleScoresImported(scoreModalExam.id, scores, totalItems)}
         />
       )}

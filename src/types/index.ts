@@ -62,6 +62,7 @@ export interface SessionRow {
   status: SessionStatus
   notes: string | null
   zoom_link: string | null
+  topic: string | null
   student_count: number
   original_date: string | null
   created_at: string
@@ -103,6 +104,7 @@ export interface ScoreRow {
   total_items: number
   percentage: number
   created_at: string
+  subject_scores?: { subject_id: string; raw_score: number; total_items: number }[] | null
   students?: { name: string; email: string | null } | null
 }
 

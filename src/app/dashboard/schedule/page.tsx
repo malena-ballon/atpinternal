@@ -2,11 +2,10 @@
 
 import { useState, useEffect, useRef, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Plus, Search, X, ArrowUpDown, Pencil, ChevronDown } from 'lucide-react'
+import { Plus, Search, X, ArrowUpDown, ChevronDown } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
-import type { SessionRow, SessionStatus, ClassRow, TeacherRow } from '@/types'
+import type { SessionRow, SessionStatus, ClassRow, TeacherRow, SubjectRow } from '@/types'
 import ScheduleTable from './components/ScheduleTable'
-import SessionFormModal from './components/SessionFormModal'
 import BulkAddSessionModal from './components/BulkAddSessionModal'
 
 const STATUS_OPTIONS: { value: SessionStatus; label: string }[] = [
@@ -128,12 +127,10 @@ function ScheduleContent() {
   const [sessions, setSessions] = useState<SessionRow[]>([])
   const [classes, setClasses] = useState<ClassRow[]>([])
   const [teachers, setTeachers] = useState<TeacherRow[]>([])
+  const [subjectsByClass, setSubjectsByClass] = useState<Map<string, SubjectRow[]>>(new Map())
   const [loading, setLoading] = useState(true)
-  const [editMode, setEditMode] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [showCreate, setShowCreate] = useState(false)
-  const [editTarget, setEditTarget] = useState<SessionRow | null>(null)
-  const [dupTarget, setDupTarget] = useState<SessionRow | null>(null)
 
   // Filter state — all multi-select
   const [q, setQ] = useState(params.get('q') ?? '')
@@ -150,18 +147,31 @@ function ScheduleContent() {
     const supabase = createClient()
     Promise.all([
       supabase.from('sessions')
-        .select('id, date, start_time, end_time, status, student_count, notes, zoom_link, class_id, subject_id, teacher_id, subjects(name), teachers(name), classes(name)')
+        .select('id, date, start_time, end_time, status, student_count, notes, zoom_link, topic, class_id, subject_id, teacher_id, subjects(name), teachers(name), classes(name)')
         .order('date', { ascending: false })
         .order('start_time'),
       supabase.from('classes').select('id, name, status, zoom_link, description, default_passing_pct, created_at, updated_at').eq('status', 'active'),
       supabase.from('teachers').select('id, user_id, name, specialization, email, availability'),
-    ]).then(([{ data: s }, { data: c }, { data: t }]) => {
+      supabase.from('subjects').select('id, name, class_id, created_at'),
+    ]).then(([{ data: s }, { data: c }, { data: t }, { data: sub }]) => {
       const loadedSessions = (s ?? []) as unknown as SessionRow[]
       const loadedClasses = (c ?? []) as ClassRow[]
       const loadedTeachers = (t ?? []) as TeacherRow[]
+      const loadedSubjects = (sub ?? []) as SubjectRow[]
+
       setSessions(loadedSessions)
       setClasses(loadedClasses)
       setTeachers(loadedTeachers)
+
+      // Build subjectsByClass map
+      const subMap = new Map<string, SubjectRow[]>()
+      loadedSubjects.forEach(subj => {
+        const arr = subMap.get(subj.class_id) ?? []
+        arr.push(subj)
+        subMap.set(subj.class_id, arr)
+      })
+      setSubjectsByClass(subMap)
+
       // Default: all options selected
       setFilterClasses(new Set(loadedClasses.map(c => c.id)))
       setFilterTeachers(new Set(loadedTeachers.map(t => t.id)))
@@ -196,12 +206,6 @@ function ScheduleContent() {
     setSelected(prev => prev.size === filtered.length ? new Set() : new Set(filtered.map(s => s.id)))
   }
 
-  async function handleCancel(id: string) {
-    const supabase = createClient()
-    await supabase.from('sessions').update({ status: 'cancelled' }).eq('id', id)
-    setSessions(prev => prev.map(s => s.id === id ? { ...s, status: 'cancelled' } : s))
-  }
-
   async function handleBulkStatus(ids: string[], status: SessionStatus) {
     const supabase = createClient()
     await supabase.from('sessions').update({ status }).in('id', ids)
@@ -209,17 +213,15 @@ function ScheduleContent() {
     setSelected(new Set())
   }
 
-  function onSaved(saved: SessionRow) {
+  function handleSessionsChanged(updated: SessionRow[]) {
     setSessions(prev => {
-      const idx = prev.findIndex(s => s.id === saved.id)
-      if (idx >= 0) { const next = [...prev]; next[idx] = saved; return next }
-      return [saved, ...prev]
+      const map = new Map(updated.map(s => [s.id, s]))
+      return prev.map(s => map.has(s.id) ? map.get(s.id)! : s)
     })
-    setEditTarget(null); setDupTarget(null)
   }
 
-  function onBulkSaved(saved: SessionRow[]) {
-    setSessions(prev => [...saved, ...prev])
+  function handleSessionAdded(newSessions: SessionRow[]) {
+    setSessions(prev => [...newSessions, ...prev])
     setShowCreate(false)
   }
 
@@ -267,19 +269,6 @@ function ScheduleContent() {
             style={{ backgroundColor: '#0BB5C7' }}>
             <Plus size={15} /> Add Session
           </button>
-          {!editMode ? (
-            <button onClick={() => setEditMode(true)}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl"
-              style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}>
-              <Pencil size={14} /> Edit
-            </button>
-          ) : (
-            <button onClick={() => { setEditMode(false); setSelected(new Set()) }}
-              className="px-4 py-2 text-sm font-semibold rounded-xl"
-              style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}>
-              Done
-            </button>
-          )}
         </div>
       </div>
 
@@ -362,16 +351,25 @@ function ScheduleContent() {
 
       {/* Table */}
       <ScheduleTable
-        sessions={filtered} selected={selected}
-        onSelectToggle={toggleSelect} onSelectAll={toggleAll}
-        onEdit={setEditTarget} onDuplicate={setDupTarget}
-        onCancel={handleCancel} onBulkStatusChange={handleBulkStatus}
-        editMode={editMode}
+        sessions={filtered}
+        selected={selected}
+        onSelectToggle={toggleSelect}
+        onSelectAll={toggleAll}
+        onBulkStatusChange={handleBulkStatus}
+        onSessionsChanged={handleSessionsChanged}
+        classes={classes}
+        teachers={teachers}
+        subjectsByClass={subjectsByClass}
       />
 
-      {showCreate && <BulkAddSessionModal classes={classes} teachers={teachers} onClose={() => setShowCreate(false)} onSaved={onBulkSaved} />}
-      {editTarget && <SessionFormModal mode="edit" session={editTarget} classes={classes} teachers={teachers} onClose={() => setEditTarget(null)} onSaved={onSaved} />}
-      {dupTarget && <SessionFormModal mode="duplicate" session={dupTarget} classes={classes} teachers={teachers} onClose={() => setDupTarget(null)} onSaved={onSaved} />}
+      {showCreate && (
+        <BulkAddSessionModal
+          classes={classes}
+          teachers={teachers}
+          onClose={() => setShowCreate(false)}
+          onSaved={handleSessionAdded}
+        />
+      )}
     </div>
   )
 }

@@ -8,6 +8,7 @@ export interface SessionPDFRow {
   endTime: string
   teacher: string
   subject: string
+  topic?: string
   status: string
 }
 
@@ -45,6 +46,7 @@ const s = StyleSheet.create({
   col_time:    { width: 90 },
   col_teacher: { flex: 1 },
   col_subject: { flex: 1 },
+  col_topic:   { flex: 1 },
   col_status:  { width: 70 },
   footer: { position: 'absolute', bottom: 24, left: 40, right: 40, flexDirection: 'row', justifyContent: 'space-between' },
   footerText: { fontSize: 7, color: C.muted },
@@ -77,6 +79,7 @@ export default function SessionSchedulePDF({ className, sessions }: Props) {
           <Text style={[s.th, s.col_time]}>Time</Text>
           <Text style={[s.th, s.col_teacher]}>Teacher</Text>
           <Text style={[s.th, s.col_subject]}>Subject</Text>
+          <Text style={[s.th, s.col_topic]}>Topic</Text>
           <Text style={[s.th, s.col_status]}>Status</Text>
         </View>
 
@@ -89,6 +92,7 @@ export default function SessionSchedulePDF({ className, sessions }: Props) {
             <Text style={[s.td, s.col_time]}>{fmt12(row.startTime)} – {fmt12(row.endTime)}</Text>
             <Text style={[s.td, s.col_teacher]}>{row.teacher || '—'}</Text>
             <Text style={[s.td, s.col_subject]}>{row.subject || '—'}</Text>
+            <Text style={[s.td, s.col_topic]}>{row.topic || '—'}</Text>
             <Text style={[s.td, s.col_status]}>{STATUS_LABELS[row.status] ?? row.status}</Text>
           </View>
         ))}

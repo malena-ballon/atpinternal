@@ -13,7 +13,7 @@ export default async function ClassDetailPage({ params }: { params: Promise<{ id
     supabase.from('classes').select('*').eq('id', id).single(),
     supabase.from('subjects').select('id, name, class_id, created_at').eq('class_id', id).order('name'),
     supabase.from('sessions')
-      .select('id, date, start_time, end_time, status, student_count, zoom_link, notes, class_id, subject_id, teacher_id, subjects(name), teachers(name), classes(name)')
+      .select('id, date, start_time, end_time, status, student_count, zoom_link, notes, topic, class_id, subject_id, teacher_id, subjects(name), teachers(name), classes(name)')
       .eq('class_id', id)
       .order('date', { ascending: true })
       .order('start_time'),

@@ -52,6 +52,10 @@ export default function ClassTabs({ cls, subjects, sessionsData, teachersData, s
     setExams(prev => prev.map(e => e.id === examId ? { ...e, total_items: totalItems } : e))
   }
 
+  function handleExamsDeleted(ids: string[]) {
+    setExams(prev => prev.filter(e => !ids.includes(e.id)))
+  }
+
   const tabs: { id: Tab; label: string }[] = [
     { id: 'class', label: 'Class' },
     { id: 'insights', label: 'Performance Insights' },
@@ -159,6 +163,7 @@ export default function ClassTabs({ cls, subjects, sessionsData, teachersData, s
                 classStudents={students}
                 onExamSaved={handleExamSaved}
                 onExamTotalItemsUpdate={handleExamTotalItemsUpdate}
+                onExamsDeleted={handleExamsDeleted}
               />
             </Section>
           </div>
@@ -172,6 +177,7 @@ export default function ClassTabs({ cls, subjects, sessionsData, teachersData, s
             className={cls.name}
             classId={cls.id}
             exams={exams}
+            subjects={subjects}
             classStudents={students}
             classPassingPct={cls.default_passing_pct}
             atRiskThreshold={cls.at_risk_threshold}

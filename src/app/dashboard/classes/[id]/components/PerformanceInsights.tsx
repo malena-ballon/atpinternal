@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Loader2, Mail } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
-import type { ExamRow, ScoreRow, StudentRow, ScoreBracket } from '@/types'
+import type { ExamRow, ScoreRow, StudentRow, ScoreBracket, SubjectRow } from '@/types'
 import { DEFAULT_BRACKETS } from '@/types'
 import OverallTab from './insights/OverallTab'
 import PerStudentTab from './insights/PerStudentTab'
@@ -77,6 +77,7 @@ interface Props {
   className: string
   classId?: string
   exams: ExamRow[]
+  subjects?: SubjectRow[]
   classStudents: StudentRow[]
   classPassingPct: number
   atRiskThreshold?: number | null
@@ -93,7 +94,7 @@ const TABS = [
 ]
 
 
-export default function PerformanceInsights({ className, classId, exams, classStudents, classPassingPct, atRiskThreshold, scoreBrackets }: Props) {
+export default function PerformanceInsights({ className, classId, exams, subjects, classStudents, classPassingPct, atRiskThreshold, scoreBrackets }: Props) {
   const effectiveBrackets = scoreBrackets ?? DEFAULT_BRACKETS
   const effectiveAtRisk = atRiskThreshold ?? classPassingPct
   const [allScores, setAllScores] = useState<ScoreRow[]>([])
@@ -104,7 +105,7 @@ export default function PerformanceInsights({ className, classId, exams, classSt
   useEffect(() => {
     if (exams.length === 0) { setLoading(false); return }
     createClient().from('scores')
-      .select('id, exam_id, student_id, raw_score, total_items, percentage, created_at, students(name, email)')
+      .select('id, exam_id, student_id, raw_score, total_items, percentage, created_at, subject_scores, students(name, email)')
       .in('exam_id', exams.map(e => e.id))
       .then(({ data }) => { setAllScores((data ?? []) as unknown as ScoreRow[]); setLoading(false) })
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -321,6 +322,7 @@ export default function PerformanceInsights({ className, classId, exams, classSt
           examStats={examStats}
           studentStats={studentStats}
           classPassingPct={classPassingPct}
+          subjects={subjects}
         />
       )}
       {activeTab === 'school' && (

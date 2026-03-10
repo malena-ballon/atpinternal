@@ -76,6 +76,7 @@ export default function SessionFormModal({
     student_count: session?.student_count?.toString() ?? '0',
     status:        (session?.status ?? 'scheduled') as SessionStatus,
     notes:         session?.notes ?? '',
+    topic:         session?.topic ?? '',
     repeat_weekly: false,
     repeat_weeks:  '1',
   })
@@ -151,6 +152,7 @@ export default function SessionFormModal({
       student_count: parseInt(form.student_count) || 0,
       status:        form.status,
       notes:         form.notes.trim() || null,
+      topic:         form.topic.trim() || null,
     }
 
     if (isEdit && session) {
@@ -233,6 +235,12 @@ export default function SessionFormModal({
               <option value="">Select subject...</option>
               {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
+          </div>
+
+          {/* Topic */}
+          <div>
+            <label className="block text-sm font-medium mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>Topic</label>
+            <input style={inputStyle} type="text" value={form.topic} onChange={set('topic')} placeholder="e.g. Chapter 3 – Linear Equations" />
           </div>
 
           {/* Date */}

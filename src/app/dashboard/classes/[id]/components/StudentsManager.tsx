@@ -83,6 +83,8 @@ export default function StudentsManager({ classId, initialStudents }: Props) {
   const [sel, setSel] = useState<Sel | null>(null)
   const anchorRef = useRef<{ r: number; c: number } | null>(null)
   const savedSnapshot = useRef<DraftRow[]>([])
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
+  const [deletingSelected, setDeletingSelected] = useState(false)
 
   const dirtyCount = rows.filter(r => r._dirty).length + deletedIds.size
 
@@ -213,6 +215,30 @@ export default function StudentsManager({ classId, initialStudents }: Props) {
 
   async function handleSave() {
     setSaving(true); setSaveError('')
+
+    // Duplicate name check
+    const existingNames = new Set(rows.filter(r => r.id && !r._isNew).map(r => r.name.trim().toLowerCase()))
+    const newRows = rows.filter(r => r._isNew && r.name.trim())
+    for (const row of newRows) {
+      const normalized = row.name.trim().toLowerCase()
+      if (existingNames.has(normalized)) {
+        setSaveError(`Duplicate student name: "${row.name.trim()}". Each student must have a unique name.`)
+        setSaving(false)
+        return
+      }
+    }
+    // Also check for duplicates within the new rows themselves
+    const newNamesSet = new Set<string>()
+    for (const row of newRows) {
+      const normalized = row.name.trim().toLowerCase()
+      if (newNamesSet.has(normalized)) {
+        setSaveError(`Duplicate student name: "${row.name.trim()}". Each student must have a unique name.`)
+        setSaving(false)
+        return
+      }
+      newNamesSet.add(normalized)
+    }
+
     const supabase = createClient()
     const dirtyRows = rows.filter(r => r._dirty)
     try {
@@ -275,6 +301,29 @@ export default function StudentsManager({ classId, initialStudents }: Props) {
     setShowBulk(false)
   }
 
+  function toggleSelectKey(key: string) {
+    setSelectedKeys(prev => { const next = new Set(prev); next.has(key) ? next.delete(key) : next.add(key); return next })
+  }
+
+  function toggleSelectAll(visibleKeys: string[]) {
+    setSelectedKeys(prev => prev.size === visibleKeys.length ? new Set() : new Set(visibleKeys))
+  }
+
+  async function handleDeleteSelected() {
+    if (selectedKeys.size === 0) return
+    if (!window.confirm(`Delete ${selectedKeys.size} student${selectedKeys.size !== 1 ? 's' : ''}? This cannot be undone.`)) return
+    setDeletingSelected(true)
+    const supabase = createClient()
+    const idsToDelete = rows.filter(r => selectedKeys.has(r._key) && r.id).map(r => r.id!)
+    if (idsToDelete.length > 0) {
+      await supabase.from('class_students').delete().eq('class_id', classId).in('student_id', idsToDelete)
+    }
+    setRows(prev => prev.filter(r => !selectedKeys.has(r._key)))
+    setSelectedKeys(new Set())
+    setDeletingSelected(false)
+    router.refresh()
+  }
+
   function exportCSV() {
     const header = 'Name,School,Email'
     const csvRows = rows.map(r =>
@@ -323,6 +372,17 @@ export default function StudentsManager({ classId, initialStudents }: Props) {
         {!editMode && q && (
           <button onClick={() => setQ('')} className="flex items-center gap-1 text-xs" style={{ color: 'var(--color-text-muted)' }}>
             <X size={12} /> Clear
+          </button>
+        )}
+
+        {!editMode && selectedKeys.size > 0 && (
+          <button
+            onClick={handleDeleteSelected}
+            disabled={deletingSelected}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-xl font-medium disabled:opacity-60"
+            style={{ backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', color: 'var(--color-danger)' }}>
+            {deletingSelected ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+            Delete {selectedKeys.size} selected
           </button>
         )}
 
@@ -396,6 +456,16 @@ export default function StudentsManager({ classId, initialStudents }: Props) {
         <table className="w-full" style={{ minWidth: '520px' }}>
           <thead>
             <tr style={{ backgroundColor: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)' }}>
+              {!editMode && (
+                <th className="px-3 py-2.5 w-8">
+                  <input
+                    type="checkbox"
+                    checked={rows.length > 0 && selectedKeys.size === rows.length}
+                    onChange={() => toggleSelectAll(rows.map(r => r._key))}
+                    style={{ accentColor: '#0BB5C7' }}
+                  />
+                </th>
+              )}
               {['#', 'Name', 'School', 'Email', ''].map(h => (
                 <th key={h} className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider"
                   style={{ color: 'var(--color-text-muted)' }}>{h}</th>
@@ -405,13 +475,23 @@ export default function StudentsManager({ classId, initialStudents }: Props) {
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-12 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>
+                <td colSpan={6} className="px-4 py-12 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>
                   {editMode ? 'No students yet. Add a row or use Paste Import.' : 'No students yet. Click Edit to add students.'}
                 </td>
               </tr>
             )}
             {rows.map((row, i) => (
-              <tr key={row._key} style={{ borderBottom: i < rows.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
+              <tr key={row._key} style={{ borderBottom: i < rows.length - 1 ? '1px solid var(--color-border)' : 'none', backgroundColor: !editMode && selectedKeys.has(row._key) ? 'rgba(61,212,230,0.04)' : 'transparent' }}>
+                {!editMode && (
+                  <td className="px-3 py-2 w-8">
+                    <input
+                      type="checkbox"
+                      checked={selectedKeys.has(row._key)}
+                      onChange={() => toggleSelectKey(row._key)}
+                      style={{ accentColor: '#0BB5C7' }}
+                    />
+                  </td>
+                )}
                 <td className="px-3 py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)', width: '36px' }}>{i + 1}</td>
 
                 {!editMode ? (

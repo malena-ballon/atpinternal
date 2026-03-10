@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Loader2, AlertCircle, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { Loader2, AlertCircle, AlertTriangle, CheckCircle2, Plus } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 import Modal from '@/app/dashboard/components/Modal'
 import type { ExamRow, StudentRow, ScoreRow, SubjectRow } from '@/types'
@@ -19,10 +19,6 @@ function parseScore(raw: string): ParsedScore | null {
   return { score, total, pct: Math.round((score / total) * 10000) / 100 }
 }
 
-function parseColumn(text: string): string[] {
-  return text.split('\n').map(s => s.trim()).filter(Boolean)
-}
-
 function detectTotalItems(scores: ParsedScore[]): number {
   const counts = new Map<number, number>()
   scores.forEach(s => counts.set(s.total, (counts.get(s.total) ?? 0) + 1))
@@ -32,6 +28,8 @@ function detectTotalItems(scores: ParsedScore[]): number {
 }
 
 // ─── Types ─────────────────────────────────────────────────────────────────
+
+interface GridRow { name: string; email: string; scores: string[] }
 
 interface PreviewRow {
   rawName: string
@@ -49,29 +47,40 @@ interface Props {
   classPassingPct: number
   subjects: SubjectRow[]
   onClose: () => void
+  onBack?: () => void
   onImported: (scores: ScoreRow[], detectedTotalItems: number) => void
 }
 
-const textareaStyle: React.CSSProperties = {
-  width: '100%', padding: '10px 12px', borderRadius: '10px',
-  border: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg)',
-  color: 'var(--color-text-primary)', fontSize: '13px',
-  fontFamily: 'monospace', resize: 'none', outline: 'none', lineHeight: '1.6',
+const INITIAL_ROWS = 20
+
+const cellInputStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '5px 8px',
+  border: 'none',
+  backgroundColor: 'transparent',
+  color: 'var(--color-text-primary)',
+  fontSize: '13px',
+  outline: 'none',
+  fontFamily: 'inherit',
 }
 
-export default function BulkScoreModal({ exam, classId, classStudents, classPassingPct, subjects, onClose, onImported }: Props) {
-  // Derive exam subjects from subject_ids; fall back to single subject_id
+export default function BulkScoreModal({ exam, classId, classStudents, classPassingPct, subjects, onClose, onBack, onImported }: Props) {
   const examSubjects: SubjectRow[] = (() => {
     const ids = exam.subject_ids?.length ? exam.subject_ids : exam.subject_id ? [exam.subject_id] : []
     return ids.map(id => subjects.find(s => s.id === id)).filter(Boolean) as SubjectRow[]
   })()
 
   const multiSubject = examSubjects.length > 1
+  const scoreColCount = examSubjects.length > 0 ? examSubjects.length : 1
 
-  const [namesText, setNamesText] = useState('')
-  const [emailsText, setEmailsText] = useState('')
-  const [scoreTexts, setScoreTexts] = useState<string[]>(
-    examSubjects.length > 1 ? examSubjects.map(() => '') : ['']
+  const makeEmptyRow = (): GridRow => ({
+    name: '',
+    email: '',
+    scores: Array(scoreColCount).fill(''),
+  })
+
+  const [gridRows, setGridRows] = useState<GridRow[]>(() =>
+    Array.from({ length: INITIAL_ROWS }, makeEmptyRow)
   )
   const [preview, setPreview] = useState<PreviewRow[] | null>(null)
   const [unknownActions, setUnknownActions] = useState<Record<number, 'skip' | 'add'>>({})
@@ -80,72 +89,109 @@ export default function BulkScoreModal({ exam, classId, classStudents, classPass
   const [totalWarning, setTotalWarning] = useState('')
 
   const effectivePct = exam.passing_pct_override ?? classPassingPct
-  const studentEmailMap = new Map(classStudents.map(s => [s.email?.toLowerCase() ?? '', s]))
+  const studentNameMap = new Map(classStudents.map(s => [s.name.toLowerCase(), s]))
 
-  function setScoreText(i: number, val: string) {
-    setScoreTexts(prev => { const n = [...prev]; n[i] = val; return n })
+  function updateCell(rowIdx: number, field: 'name' | 'email', value: string) {
+    setGridRows(prev => { const n = [...prev]; n[rowIdx] = { ...n[rowIdx], [field]: value }; return n })
+  }
+
+  function updateScore(rowIdx: number, scoreIdx: number, value: string) {
+    setGridRows(prev => {
+      const n = [...prev]
+      const scores = [...n[rowIdx].scores]
+      scores[scoreIdx] = value
+      n[rowIdx] = { ...n[rowIdx], scores }
+      return n
+    })
+  }
+
+  function handleCellPaste(rowStart: number, e: React.ClipboardEvent<HTMLInputElement>) {
+    const text = e.clipboardData.getData('text')
+    if (!text.includes('\n') && !text.includes('\t')) return
+    e.preventDefault()
+    applyPastedText(text, rowStart)
+  }
+
+  function applyPastedText(text: string, rowStart = 0) {
+    const lines = text.split('\n').map(r => r.replace(/\r$/, ''))
+    const tableData = lines
+      .map(r => r.split('\t').map(c => c.trim()))
+      .filter(r => r.some(c => c))
+    if (tableData.length === 0) return
+
+    // Auto-skip header row
+    let startIdx = 0
+    const firstRow = tableData[0]
+    if (!firstRow.some(c => c.includes('/')) && tableData.length > 1 &&
+        firstRow.some(c => /^(name|student|email|score)/i.test(c))) {
+      startIdx = 1
+    }
+    const dataRows = tableData.slice(startIdx)
+
+    setGridRows(prev => {
+      const next = [...prev]
+      dataRows.forEach((cols, offset) => {
+        const idx = rowStart + offset
+        if (idx >= next.length) next.push(makeEmptyRow())
+        const scores = [...next[idx].scores]
+        for (let ci = 0; ci < scoreColCount; ci++) {
+          if (cols[2 + ci] !== undefined) scores[ci] = cols[2 + ci]
+        }
+        next[idx] = {
+          name: cols[0] !== undefined ? cols[0] : next[idx].name,
+          email: cols[1] !== undefined ? cols[1] : next[idx].email,
+          scores,
+        }
+      })
+      while (next.length < INITIAL_ROWS) next.push(makeEmptyRow())
+      return next
+    })
   }
 
   function handlePreview() {
     setError('')
     setTotalWarning('')
-    const names = parseColumn(namesText)
-    const emails = parseColumn(emailsText)
-    const scoreCols = multiSubject
-      ? examSubjects.map((_, i) => parseColumn(scoreTexts[i] ?? ''))
-      : [parseColumn(scoreTexts[0] ?? '')]
+    const filledRows = gridRows.filter(r => r.name.trim())
+    if (filledRows.length === 0) { setError('No data entered. Fill in rows or paste from a spreadsheet.'); return }
 
-    if (emails.length === 0) { setError('Email column is empty.'); return }
-    for (let i = 0; i < scoreCols.length; i++) {
-      const label = examSubjects[i]?.name ?? `Subject ${i + 1}`
-      if (scoreCols[i].length === 0) { setError(`Score column for "${label}" is empty.`); return }
-      if (scoreCols[i].length !== emails.length) {
-        setError(`Row count mismatch — Emails: ${emails.length}, ${label} Scores: ${scoreCols[i].length}.`)
-        return
-      }
-    }
-    if (names.length > 0 && names.length !== emails.length) {
-      setError(`Row count mismatch — Names: ${names.length}, Emails: ${emails.length}.`)
-      return
-    }
+    const parsedRows: PreviewRow[] = []
+    for (let i = 0; i < filledRows.length; i++) {
+      const row = filledRows[i]
+      const parsedBySubject: (ParsedScore | null)[] = Array.from({ length: scoreColCount }, (_, ci) =>
+        row.scores[ci]?.trim() ? parseScore(row.scores[ci]) : null
+      )
 
-    const parsedCols = scoreCols.map(col => col.map(s => parseScore(s)))
-    for (let ci = 0; ci < parsedCols.length; ci++) {
-      const bad = parsedCols[ci].map((p, i) => ({ p, i })).filter(x => !x.p)
-      if (bad.length > 0) {
-        const label = examSubjects[ci]?.name ?? `Subject ${ci + 1}`
-        setError(`Could not parse score in "${label}" on row(s): ${bad.map(x => x.i + 1).join(', ')}. Expected: "25 / 50"`)
-        return
+      for (let ci = 0; ci < scoreColCount; ci++) {
+        const raw = row.scores[ci]?.trim()
+        const label = multiSubject ? (examSubjects[ci]?.name ?? `Subject ${ci + 1}`) : 'Score'
+        if (!raw) { setError(`Row ${i + 1}: missing score for "${label}".`); return }
+        if (!parsedBySubject[ci]) { setError(`Row ${i + 1}: invalid score for "${label}": "${raw}". Expected: 25 / 50`); return }
       }
+
+      const allParsed = parsedBySubject.filter(Boolean) as ParsedScore[]
+      const totalParsed: ParsedScore | null = allParsed.length > 0 ? {
+        score: allParsed.reduce((s, p) => s + p.score, 0),
+        total: allParsed.reduce((s, p) => s + p.total, 0),
+        pct: Math.round(allParsed.reduce((s, p) => s + p.score, 0) / allParsed.reduce((s, p) => s + p.total, 0) * 10000) / 100,
+      } : null
+
+      const student = studentNameMap.get(row.name.trim().toLowerCase()) ?? null
+      parsedRows.push({ rawName: row.name.trim(), rawEmail: row.email.trim(), parsedBySubject, totalParsed, student, isUnknown: !student })
     }
 
     if (multiSubject) {
       setTotalWarning(`Scores for ${examSubjects.length} subjects will be summed to compute the total.`)
     } else {
-      const totals = new Set(parsedCols[0].map(p => p!.total))
+      const totals = new Set(parsedRows.map(r => r.parsedBySubject[0]?.total).filter(Boolean))
       if (totals.size > 1) {
         setTotalWarning(`Different denominators detected: ${[...totals].join(', ')}. Most common will be used.`)
       }
     }
 
-    const rows: PreviewRow[] = emails.map((email, i) => {
-      const student = studentEmailMap.get(email.toLowerCase()) ?? null
-      const parsedBySubject = parsedCols.map(col => col[i])
-      const allParsed = parsedBySubject.filter(Boolean) as ParsedScore[]
-      const totalParsed: ParsedScore | null = allParsed.length > 0
-        ? {
-            score: allParsed.reduce((s, p) => s + p.score, 0),
-            total: allParsed.reduce((s, p) => s + p.total, 0),
-            pct: Math.round((allParsed.reduce((s, p) => s + p.score, 0) / allParsed.reduce((s, p) => s + p.total, 0)) * 10000) / 100,
-          }
-        : null
-      return { rawName: names[i] ?? '', rawEmail: email, parsedBySubject, totalParsed, student, isUnknown: !student }
-    })
-
     const defaultActions: Record<number, 'skip' | 'add'> = {}
-    rows.forEach((r, i) => { if (r.isUnknown) defaultActions[i] = 'skip' })
+    parsedRows.forEach((r, i) => { if (r.isUnknown) defaultActions[i] = 'skip' })
     setUnknownActions(defaultActions)
-    setPreview(rows)
+    setPreview(parsedRows)
   }
 
   async function handleImport() {
@@ -164,12 +210,13 @@ export default function BulkScoreModal({ exam, classId, classStudents, classPass
       let studentId = row.student?.id
 
       if (row.isUnknown) {
-        const name = row.rawName || row.rawEmail.split('@')[0]
+        const name = row.rawName
+        const email = row.rawEmail ? row.rawEmail.toLowerCase() : null
         const { data: newStudent, error: err } = await supabase
           .from('students')
-          .upsert({ name, school: null, email: row.rawEmail.toLowerCase() }, { onConflict: 'email' })
+          .insert({ name, school: null, email })
           .select('id').single()
-        if (err || !newStudent) { setError(`Failed to add student ${row.rawEmail}: ${err?.message}`); setLoading(false); return }
+        if (err || !newStudent) { setError(`Failed to add student ${row.rawName}: ${err?.message}`); setLoading(false); return }
         studentId = newStudent.id
         await supabase.from('class_students')
           .upsert({ class_id: classId, student_id: studentId }, { onConflict: 'class_id,student_id' })
@@ -177,10 +224,25 @@ export default function BulkScoreModal({ exam, classId, classStudents, classPass
 
       if (!studentId) continue
 
+      // Per-subject breakdown for subject-level analytics
+      const subjectScores = multiSubject
+        ? (row.parsedBySubject.map((p, ci) => p ? {
+            subject_id: examSubjects[ci].id,
+            raw_score: p.score,
+            total_items: p.total,
+          } : null).filter(Boolean) as { subject_id: string; raw_score: number; total_items: number }[])
+        : null
+
       const { data: score, error: err } = await supabase
         .from('scores')
         .upsert(
-          { exam_id: exam.id, student_id: studentId, raw_score: row.totalParsed.score, total_items: row.totalParsed.total },
+          {
+            exam_id: exam.id,
+            student_id: studentId,
+            raw_score: row.totalParsed.score,
+            total_items: row.totalParsed.total,
+            subject_scores: subjectScores?.length ? subjectScores : null,
+          },
           { onConflict: 'exam_id,student_id' }
         )
         .select('id, exam_id, student_id, raw_score, total_items, percentage, created_at')
@@ -199,11 +261,13 @@ export default function BulkScoreModal({ exam, classId, classStudents, classPass
     ? preview.filter((r, i) => !r.isUnknown || unknownActions[i] === 'add').length
     : 0
 
+  const filledCount = gridRows.filter(r => r.name.trim()).length
+
   return (
     <Modal title={`Import Scores — ${exam.name}`} onClose={onClose} width="xl">
       {!preview ? (
-        <div className="space-y-5">
-          {/* Subject indicator */}
+        <div className="space-y-4">
+          {/* Subject tags */}
           {examSubjects.length > 0 && (
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>Subjects:</span>
@@ -213,20 +277,12 @@ export default function BulkScoreModal({ exam, classId, classStudents, classPass
                   {s.name}
                 </span>
               ))}
-              {multiSubject && (
-                <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                  → {examSubjects.length} score columns below
-                </span>
-              )}
             </div>
           )}
 
-          <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-            Copy each column from Google Sheets and paste below. Scores must be in the format{' '}
-            <code className="px-1.5 py-0.5 rounded text-xs" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
-              25 / 50
-            </code>
-            {multiSubject && '. Each subject gets its own column; totals are summed automatically.'}
+          <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+            Type directly or paste a range from Google Sheets / Excel (Name → Email → Scores, tab-separated).
+            Score format: <code className="px-1 py-0.5 rounded text-xs" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>25 / 50</code>
           </p>
 
           {error && (
@@ -236,48 +292,114 @@ export default function BulkScoreModal({ exam, classId, classStudents, classPass
             </div>
           )}
 
-          <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${multiSubject ? examSubjects.length + 2 : 3}, minmax(0, 1fr))` }}>
-            <div>
-              <label className="block text-sm font-medium mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>Student Name</label>
-              <textarea value={namesText} onChange={e => setNamesText(e.target.value)}
-                placeholder={'Juan Dela Cruz\nMaria Santos\n(optional)'} rows={12} style={textareaStyle} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
-                Email<span className="ml-0.5" style={{ color: 'var(--color-danger)' }}>*</span>
-              </label>
-              <textarea value={emailsText} onChange={e => setEmailsText(e.target.value)}
-                placeholder={'juan@email.com\nmaria@email.com\n...'} rows={12} style={textareaStyle} />
-            </div>
-            {multiSubject ? examSubjects.map((subj, i) => (
-              <div key={subj.id}>
-                <label className="block text-sm font-medium mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
-                  {subj.name}<span className="ml-0.5" style={{ color: 'var(--color-danger)' }}>*</span>
-                </label>
-                <textarea value={scoreTexts[i] ?? ''} onChange={e => setScoreText(i, e.target.value)}
-                  placeholder={'48 / 50\n25 / 50\n...'} rows={12} style={textareaStyle} />
-              </div>
-            )) : (
-              <div>
-                <label className="block text-sm font-medium mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
-                  Score<span className="ml-0.5" style={{ color: 'var(--color-danger)' }}>*</span>
-                </label>
-                <textarea value={scoreTexts[0] ?? ''} onChange={e => setScoreText(0, e.target.value)}
-                  placeholder={'48 / 50\n25 / 50\n30 / 50\n...'} rows={12} style={textareaStyle} />
-              </div>
-            )}
+          {/* Spreadsheet grid */}
+          <div className="rounded-xl overflow-auto" style={{ border: '1px solid var(--color-border)', maxHeight: 420 }}>
+            <table className="w-full text-sm border-collapse" style={{ minWidth: `${120 + 180 + scoreColCount * 130}px` }}>
+              <thead>
+                <tr style={{ backgroundColor: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)', position: 'sticky', top: 0, zIndex: 1 }}>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider"
+                    style={{ color: 'var(--color-text-muted)', borderRight: '1px solid var(--color-border)', width: 36, minWidth: 36 }}>
+                    #
+                  </th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider"
+                    style={{ color: 'var(--color-text-muted)', borderRight: '1px solid var(--color-border)', minWidth: 140 }}>
+                    Name <span style={{ color: 'var(--color-danger)' }}>*</span>
+                  </th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider"
+                    style={{ color: 'var(--color-text-muted)', borderRight: '1px solid var(--color-border)', minWidth: 200 }}>
+                    Email
+                  </th>
+                  {examSubjects.length > 0
+                    ? examSubjects.map((s, ci) => (
+                        <th key={s.id} className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider"
+                          style={{ color: 'var(--color-text-muted)', borderRight: ci < examSubjects.length - 1 ? '1px solid var(--color-border)' : 'none', minWidth: 130 }}>
+                          {s.name} <span style={{ color: 'var(--color-danger)' }}>*</span>
+                        </th>
+                      ))
+                    : (
+                        <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider"
+                          style={{ color: 'var(--color-text-muted)', minWidth: 130 }}>
+                          Score <span style={{ color: 'var(--color-danger)' }}>*</span>
+                        </th>
+                      )
+                  }
+                </tr>
+              </thead>
+              <tbody>
+                {gridRows.map((row, i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid var(--color-border)' }}>
+                    <td className="px-3 py-1 text-xs text-center"
+                      style={{ color: 'var(--color-text-muted)', borderRight: '1px solid var(--color-border)' }}>
+                      {i + 1}
+                    </td>
+                    <td style={{ borderRight: '1px solid var(--color-border)', padding: 0 }}>
+                      <input
+                        style={cellInputStyle}
+                        value={row.name}
+                        onChange={e => updateCell(i, 'name', e.target.value)}
+                        onPaste={e => handleCellPaste(i, e)}
+                        placeholder={i < 2 ? 'Juan Dela Cruz' : ''}
+                      />
+                    </td>
+                    <td style={{ borderRight: '1px solid var(--color-border)', padding: 0 }}>
+                      <input
+                        style={cellInputStyle}
+                        value={row.email}
+                        onChange={e => updateCell(i, 'email', e.target.value)}
+                        onPaste={e => handleCellPaste(i, e)}
+                        placeholder={i < 2 ? 'juan@email.com' : ''}
+                      />
+                    </td>
+                    {Array.from({ length: scoreColCount }, (_, ci) => (
+                      <td key={ci} style={{ borderRight: ci < scoreColCount - 1 ? '1px solid var(--color-border)' : 'none', padding: 0 }}>
+                        <input
+                          style={cellInputStyle}
+                          value={row.scores[ci] ?? ''}
+                          onChange={e => updateScore(i, ci, e.target.value)}
+                          onPaste={e => handleCellPaste(i, e)}
+                          placeholder={i < 2 ? '25 / 50' : ''}
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
 
-          <div className="flex justify-end gap-3">
-            <button onClick={onClose} className="px-4 py-2 text-sm rounded-xl"
-              style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}>
-              Cancel
-            </button>
-            <button onClick={handlePreview}
-              className="px-5 py-2 text-sm font-semibold rounded-xl text-white"
-              style={{ backgroundColor: '#0BB5C7' }}>
-              Preview →
-            </button>
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setGridRows(prev => [...prev, ...Array.from({ length: 10 }, makeEmptyRow)])}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg"
+                style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-muted)' }}
+              >
+                <Plus size={11} /> Add 10 rows
+              </button>
+              {filledCount > 0 && (
+                <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                  {filledCount} row{filledCount !== 1 ? 's' : ''} filled
+                </span>
+              )}
+            </div>
+            <div className="flex gap-3">
+              {onBack ? (
+                <button onClick={onBack} className="px-4 py-2 text-sm rounded-xl"
+                  style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}>
+                  ← Back
+                </button>
+              ) : (
+                <button onClick={onClose} className="px-4 py-2 text-sm rounded-xl"
+                  style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}>
+                  Cancel
+                </button>
+              )}
+              <button onClick={handlePreview}
+                className="px-5 py-2 text-sm font-semibold rounded-xl text-white"
+                style={{ backgroundColor: '#0BB5C7' }}>
+                Preview →
+              </button>
+            </div>
           </div>
         </div>
       ) : (

@@ -2,16 +2,41 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Plus, Pencil, Link2, ExternalLink, Check } from 'lucide-react'
+import { Plus, Pencil, Link2, ExternalLink, Check, Trash2, Loader2 } from 'lucide-react'
 import Link from 'next/link'
+import { createClient } from '@/utils/supabase/client'
 import type { ClassSummary, ClassRow } from '@/types'
 import StatusBadge from '@/app/dashboard/components/StatusBadge'
 import ClassFormModal from './ClassFormModal'
 
 export default function ClassesTable({ initialClasses }: { initialClasses: ClassSummary[] }) {
+  const router = useRouter()
+  const [classes, setClasses] = useState<ClassSummary[]>(initialClasses)
   const [showCreate, setShowCreate] = useState(false)
   const [editTarget, setEditTarget] = useState<ClassRow | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [deletingSelected, setDeletingSelected] = useState(false)
+
+  function toggleSelectId(id: string) {
+    setSelectedIds(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next })
+  }
+
+  function toggleSelectAll() {
+    setSelectedIds(prev => prev.size === classes.length ? new Set() : new Set(classes.map(c => c.id)))
+  }
+
+  async function handleDeleteSelected() {
+    if (selectedIds.size === 0) return
+    if (!window.confirm(`Delete ${selectedIds.size} class${selectedIds.size !== 1 ? 'es' : ''}? This will remove all associated sessions and data. This cannot be undone.`)) return
+    setDeletingSelected(true)
+    const supabase = createClient()
+    await supabase.from('classes').delete().in('id', Array.from(selectedIds))
+    setClasses(prev => prev.filter(c => !selectedIds.has(c.id)))
+    setSelectedIds(new Set())
+    setDeletingSelected(false)
+    router.refresh()
+  }
 
   function copyLink(id: string) {
     navigator.clipboard.writeText(`${window.location.origin}/schedule/${id}`)
@@ -24,16 +49,29 @@ export default function ClassesTable({ initialClasses }: { initialClasses: Class
       {/* Toolbar */}
       <div className="flex items-center justify-between">
         <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-          {initialClasses.length} {initialClasses.length === 1 ? 'class' : 'classes'}
+          {classes.length} {classes.length === 1 ? 'class' : 'classes'}
         </p>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl text-white"
-          style={{ backgroundColor: '#0BB5C7' }}
-        >
-          <Plus size={15} />
-          New Class
-        </button>
+        <div className="flex items-center gap-2">
+          {selectedIds.size > 0 && (
+            <button
+              onClick={handleDeleteSelected}
+              disabled={deletingSelected}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-xl disabled:opacity-60"
+              style={{ backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', color: 'var(--color-danger)' }}
+            >
+              {deletingSelected ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+              Delete {selectedIds.size} selected
+            </button>
+          )}
+          <button
+            onClick={() => setShowCreate(true)}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl text-white"
+            style={{ backgroundColor: '#0BB5C7' }}
+          >
+            <Plus size={15} />
+            New Class
+          </button>
+        </div>
       </div>
 
       {/* Table */}
@@ -41,7 +79,7 @@ export default function ClassesTable({ initialClasses }: { initialClasses: Class
         className="rounded-2xl overflow-hidden"
         style={{ border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface)' }}
       >
-        {initialClasses.length === 0 ? (
+        {classes.length === 0 ? (
           <div className="py-16 text-center">
             <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>No classes yet.</p>
             <button
@@ -56,6 +94,14 @@ export default function ClassesTable({ initialClasses }: { initialClasses: Class
           <table className="w-full">
             <thead>
               <tr style={{ borderBottom: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg)' }}>
+                <th className="px-4 py-3 w-10">
+                  <input
+                    type="checkbox"
+                    checked={classes.length > 0 && selectedIds.size === classes.length}
+                    onChange={toggleSelectAll}
+                    style={{ accentColor: '#0BB5C7' }}
+                  />
+                </th>
                 {['Class Name', 'Status', 'Subjects', 'Sessions', 'Completion', 'Rate', 'Actions'].map(h => (
                   <th
                     key={h}
@@ -68,11 +114,19 @@ export default function ClassesTable({ initialClasses }: { initialClasses: Class
               </tr>
             </thead>
             <tbody>
-              {initialClasses.map((cls, i) => (
+              {classes.map((cls, i) => (
                 <tr
                   key={cls.id}
-                  style={{ borderBottom: i < initialClasses.length - 1 ? '1px solid var(--color-border)' : 'none' }}
+                  style={{ borderBottom: i < classes.length - 1 ? '1px solid var(--color-border)' : 'none', backgroundColor: selectedIds.has(cls.id) ? 'rgba(61,212,230,0.04)' : 'transparent' }}
                 >
+                  <td className="px-4 py-4 w-10">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(cls.id)}
+                      onChange={() => toggleSelectId(cls.id)}
+                      style={{ accentColor: '#0BB5C7' }}
+                    />
+                  </td>
                   <td className="px-5 py-4">
                     <Link
                       href={`/dashboard/classes/${cls.id}`}

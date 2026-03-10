@@ -79,6 +79,7 @@ interface DraftRow {
   end_time: string
   teacher_id: string
   subject_id: string
+  topic: string
   status: SessionStatus
   _statusLocked: boolean
   _isNew: boolean
@@ -120,9 +121,9 @@ function fmt12(t: string): string {
   return `${h % 12 || 12}:${m.toString().padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`
 }
 
-// editable columns: 0=date,1=start,2=end,3=teacher,4=subject
-type PasteCol = 'date' | 'start_time' | 'end_time' | 'teacher_id' | 'subject_id'
-const PASTE_COLS: PasteCol[] = ['date', 'start_time', 'end_time', 'teacher_id', 'subject_id']
+// editable columns: 0=date,1=start,2=end,3=teacher,4=subject,5=topic
+type PasteCol = 'date' | 'start_time' | 'end_time' | 'teacher_id' | 'subject_id' | 'topic'
+const PASTE_COLS: PasteCol[] = ['date', 'start_time', 'end_time', 'teacher_id', 'subject_id', 'topic']
 
 const cellInput: React.CSSProperties = {
   width: '100%', background: 'transparent', border: 'none', outline: 'none',
@@ -192,6 +193,7 @@ function sessionToRow(s: SessionRow): DraftRow {
     end_time: s.end_time.slice(0,5),
     teacher_id: s.teacher_id ?? '',
     subject_id: s.subject_id ?? '',
+    topic: s.topic ?? '',
     status: s.status as SessionStatus,
     _statusLocked: s.status === 'cancelled' || s.status === 'rescheduled',
     _isNew: false, _dirty: false,
@@ -199,7 +201,7 @@ function sessionToRow(s: SessionRow): DraftRow {
 }
 
 function blankRow(): DraftRow {
-  return { _key: newKey(), date: '', start_time: '', end_time: '', teacher_id: '', subject_id: '',
+  return { _key: newKey(), date: '', start_time: '', end_time: '', teacher_id: '', subject_id: '', topic: '',
     status: 'scheduled', _statusLocked: false, _isNew: true, _dirty: true }
 }
 
@@ -209,6 +211,7 @@ function getCellText(row: DraftRow, c: number, teachers: TeacherRow[], subjects:
   if (c === 2) return row.end_time
   if (c === 3) return teachers.find(t => t.id === row.teacher_id)?.name ?? ''
   if (c === 4) return subjects.find(s => s.id === row.subject_id)?.name ?? ''
+  if (c === 5) return row.topic
   return ''
 }
 
@@ -220,6 +223,7 @@ function applyCellValue(row: DraftRow, c: number, raw: string, teachers: Teacher
   else if (col === 'end_time')   { row.end_time   = parseTime(raw) || row.end_time }
   else if (col === 'teacher_id') { const m = teachers.find(t => t.name.toLowerCase() === raw.toLowerCase()); if (m) row.teacher_id = m.id }
   else if (col === 'subject_id') { const m = subjects.find(s => s.name.toLowerCase() === raw.toLowerCase()); if (m) row.subject_id = m.id }
+  else if (col === 'topic') { row.topic = raw.trim() }
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -288,6 +292,7 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
         endTime: row.end_time,
         teacher: teachers.find(t => t.id === row.teacher_id)?.name ?? '',
         subject: subjects.find(s => s.id === row.subject_id)?.name ?? '',
+        topic: row.topic || '',
         status: row.status,
       }
     })
@@ -495,21 +500,21 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
       if (toInsert.length > 0) {
         const { error } = await supabase.from('sessions').insert(
           toInsert.map(r => ({ class_id: classId, date: r.date, start_time: r.start_time, end_time: r.end_time,
-            teacher_id: r.teacher_id || null, subject_id: r.subject_id || null, status: r.status, student_count: sc }))
+            teacher_id: r.teacher_id || null, subject_id: r.subject_id || null, topic: r.topic || null, status: r.status, student_count: sc }))
         )
         if (error) throw error
       }
       for (const r of toUpdate) {
         const { error } = await supabase.from('sessions').update({
           date: r.date, start_time: r.start_time, end_time: r.end_time,
-          teacher_id: r.teacher_id || null, subject_id: r.subject_id || null, status: r.status, student_count: sc,
+          teacher_id: r.teacher_id || null, subject_id: r.subject_id || null, topic: r.topic || null, status: r.status, student_count: sc,
         }).eq('id', r.id!)
         if (error) throw error
       }
       if (rows.some(r => !r._isNew))
         await supabase.from('sessions').update({ student_count: sc }).eq('class_id', classId)
       const { data: fresh } = await supabase.from('sessions')
-        .select('id, date, start_time, end_time, status, student_count, zoom_link, notes, class_id, subject_id, teacher_id, subjects(name), teachers(name), classes(name)')
+        .select('id, date, start_time, end_time, status, student_count, zoom_link, notes, topic, class_id, subject_id, teacher_id, subjects(name), teachers(name), classes(name)')
         .eq('class_id', classId).order('date').order('start_time')
       if (fresh) setRows((fresh as unknown as SessionRow[]).map(sessionToRow))
       setDeletedIds(new Set())
@@ -628,14 +633,14 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
         <table className="w-full" style={{ minWidth: '820px' }}>
           <thead>
             <tr style={{ backgroundColor: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)' }}>
-              {['#','Date','Day','Start','End','Teacher','Subject','Status',''].map(h => (
+              {['#','Date','Day','Start','End','Teacher','Subject','Topic','Status',''].map(h => (
                 <th key={h} className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {displayRows.length === 0 && (
-              <tr><td colSpan={9} className="px-4 py-12 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>{rows.length === 0 ? 'No sessions yet.' : 'No sessions match the filters.'}</td></tr>
+              <tr><td colSpan={10} className="px-4 py-12 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>{rows.length === 0 ? 'No sessions yet.' : 'No sessions match the filters.'}</td></tr>
             )}
             {displayRows.map((row, i) => (
               <tr key={row._key} style={{ borderBottom: i < displayRows.length-1 ? '1px solid var(--color-border)' : 'none' }}>
@@ -657,6 +662,9 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
                     </td>
                     <td className="px-3 py-2.5 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
                       {subjects.find(s => s.id === row.subject_id)?.name ?? <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
+                    </td>
+                    <td className="px-3 py-2.5 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                      {row.topic || <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
                     </td>
                     <td className="px-3 py-2.5">
                       <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={STATUS_COLORS[row.status]}>
@@ -733,6 +741,14 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
                         <option value="">— Subject —</option>
                         {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                       </select>
+                    </td>
+
+                    {/* Topic col=5 */}
+                    <td className="px-2 py-1.5" style={{ minWidth:'160px', ...cellStyle(i,5,row) }} onMouseDown={e => cellMouseDown(i,5,e)}>
+                      <input type="text" value={row.topic} placeholder="Topic…"
+                        onChange={e => updateRow(row._key,{topic:e.target.value})}
+                        onPaste={e => handleCellPaste(e,row._key,5)}
+                        style={cellInput} />
                     </td>
 
                     {/* Status */}
