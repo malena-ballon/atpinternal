@@ -1,5 +1,6 @@
 import { Document, Page, View, Text, StyleSheet } from '@react-pdf/renderer'
 import type { ExamStats } from '../PerformanceInsights'
+import type { SubjectRow } from '@/types'
 
 function ordinal(n: number) {
   const s = ['th', 'st', 'nd', 'rd'], v = n % 100
@@ -40,9 +41,17 @@ interface Props {
   className: string
   stats: ExamStats
   classPassingPct: number
+  subjects?: SubjectRow[]
+  maskedStudentId?: string
+  topNVisible?: number
 }
 
-export default function ExamReportPDF({ className, stats, classPassingPct }: Props) {
+function anonymLabel(i: number) {
+  if (i < 26) return String.fromCharCode(65 + i)
+  return String.fromCharCode(64 + Math.floor(i / 26)) + String.fromCharCode(65 + (i % 26))
+}
+
+export default function ExamReportPDF({ className, stats, classPassingPct, subjects, maskedStudentId, topNVisible }: Props) {
   const effectivePassing = stats.exam.passing_pct_override ?? classPassingPct
   const passRate = stats.scores.length > 0
     ? Math.round((stats.passCount / stats.scores.length) * 100) : 0
@@ -53,8 +62,44 @@ export default function ExamReportPDF({ className, stats, classPassingPct }: Pro
   const total = stats.scores.length
   const percentileMap = new Map(stats.scores.map(s => {
     const countLE = stats.scores.filter(x => x.percentage <= s.percentage).length
-    return [s.id, Math.round((countLE / total) * 100)]
+    return [s.id, Math.min(99, Math.round((countLE / total) * 100))]
   }))
+
+  // Subjects for this exam (used for per-subject percentile columns)
+  const examSubjects = (() => {
+    if (!stats.exam.subject_ids?.length) return [] as { id: string; name: string }[]
+    const hasSubjectScores = stats.scores.some(s => s.subject_scores?.length)
+    return stats.exam.subject_ids
+      .filter(id => hasSubjectScores
+        ? stats.scores.some(s => s.subject_scores?.some(x => x.subject_id === id))
+        : true)
+      .map(id => ({ id, name: subjects?.find(s => s.id === id)?.name ?? id }))
+  })()
+
+  // Per-student, per-subject percentile within this exam
+  const subjectPercentileByStudent = (() => {
+    const result = new Map<string, Map<string, number>>()
+    for (const subj of examSubjects) {
+      const entries = stats.scores
+        .map(sc => {
+          if (sc.subject_scores?.length) {
+            const ss = sc.subject_scores.find(x => x.subject_id === subj.id)
+            if (!ss) return null
+            return { id: sc.id, pct: ss.total_items > 0 ? (ss.raw_score / ss.total_items) * 100 : 0 }
+          }
+          if (examSubjects.length === 1) return { id: sc.id, pct: sc.percentage }
+          return null
+        })
+        .filter(Boolean) as { id: string; pct: number }[]
+      const n = entries.length
+      for (const e of entries) {
+        const countLE = entries.filter(x => x.pct <= e.pct).length
+        if (!result.has(e.id)) result.set(e.id, new Map())
+        result.get(e.id)!.set(subj.id, Math.min(99, Math.round((countLE / n) * 100)))
+      }
+    }
+    return result
+  })()
 
   const genDate = new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })
   const examDate = stats.exam.date
@@ -97,10 +142,7 @@ export default function ExamReportPDF({ className, stats, classPassingPct }: Pro
           <View style={{ flex: 1, backgroundColor: 'rgba(239,68,68,0.06)', borderRadius: 8, padding: 10 }}>
             <Text style={{ fontSize: 18, fontFamily: 'Helvetica-Bold', color: C.danger }}>{stats.failCount} failed</Text>
             <Text style={{ fontSize: 8, color: C.danger, marginTop: 2 }}>
-              Highest: {stats.highest?.pct.toFixed(1)}% ({stats.highest?.name ?? '—'})
-            </Text>
-            <Text style={{ fontSize: 8, color: C.muted }}>
-              Lowest: {stats.lowest?.pct.toFixed(1)}% ({stats.lowest?.name ?? '—'})
+              Highest: {stats.highest?.pct.toFixed(1)}%  ·  Lowest: {stats.lowest?.pct.toFixed(1)}%
             </Text>
           </View>
         </View>
@@ -124,30 +166,47 @@ export default function ExamReportPDF({ className, stats, classPassingPct }: Pro
           </View>
         ))}
 
-        {/* Student Scores Table */}
-        {sortedByPct.length > 0 && (
-          <>
-            <Text style={s.sectionTitle}>Student Scores &amp; Percentile Ranks</Text>
-            <View style={s.tableHeader}>
-              {['#', 'Student', 'Score', '%', 'Percentile', 'Result'].map((h, i) => (
-                <Text key={h} style={[s.th, { flex: [0.3, 2.5, 1, 0.8, 1, 0.8][i] }]}>{h}</Text>
-              ))}
-            </View>
-            {sortedByPct.map((sc, i) => {
-              const passes = sc.percentage >= effectivePassing
-              return (
-                <View key={sc.id} style={i % 2 === 1 ? s.tableRowAlt : s.tableRow}>
-                  <Text style={[s.td, { flex: 0.3, color: C.muted }]}>{i + 1}</Text>
-                  <Text style={[s.td, { flex: 2.5, fontFamily: 'Helvetica-Bold', color: C.dark }]}>{sc.students?.name ?? '—'}</Text>
-                  <Text style={[s.td, { flex: 1 }]}>{sc.raw_score} / {sc.total_items}</Text>
-                  <Text style={[s.td, { flex: 0.8, fontFamily: 'Helvetica-Bold' }]}>{sc.percentage.toFixed(1)}%</Text>
-                  <Text style={[s.td, { flex: 1, color: C.muted }]}>{ordinal(percentileMap.get(sc.id) ?? 0)}</Text>
-                  <Text style={[s.td, { flex: 0.8, color: passes ? C.success : C.danger }]}>{passes ? 'Pass' : 'Fail'}</Text>
-                </View>
-              )
-            })}
-          </>
-        )}
+        {/* Student Scores Table — overall percentile + one column per subject */}
+        {sortedByPct.length > 0 && (() => {
+          const abbrev = (name: string) => name.length > 7 ? name.slice(0, 6) + '.' : name
+          const subjFlex = 0.65
+          const headers = ['#', 'Student', 'Score', '%', 'Overall', ...examSubjects.map(s => abbrev(s.name)), 'Result']
+          const flexes = [0.25, 1.8, 0.8, 0.6, 0.75, ...examSubjects.map(() => subjFlex), 0.6]
+          return (
+            <>
+              <Text style={s.sectionTitle}>Student Scores &amp; Percentile Ranks</Text>
+              <View style={s.tableHeader}>
+                {headers.map((h, i) => (
+                  <Text key={h + i} style={[s.th, { flex: flexes[i] }]}>{h}</Text>
+                ))}
+              </View>
+              {sortedByPct.map((sc, i) => {
+                const passes = sc.percentage >= effectivePassing
+                const stuSubjMap = subjectPercentileByStudent.get(sc.id)
+                return (
+                  <View key={sc.id} style={i % 2 === 1 ? s.tableRowAlt : s.tableRow}>
+                    <Text style={[s.td, { flex: 0.25, color: C.muted }]}>{i + 1}</Text>
+                    <Text style={[s.td, { flex: 1.8, fontFamily: 'Helvetica-Bold', color: C.dark }]}>
+                      {maskedStudentId
+                        ? (sc.student_id === maskedStudentId ? (sc.students?.name ?? '—') : `Student ${anonymLabel(i)}`)
+                        : topNVisible !== undefined && i >= topNVisible
+                          ? `Student ${anonymLabel(i)}`
+                          : (sc.students?.name ?? '—')}
+                    </Text>
+                    <Text style={[s.td, { flex: 0.8 }]}>{sc.raw_score} / {sc.total_items}</Text>
+                    <Text style={[s.td, { flex: 0.6, fontFamily: 'Helvetica-Bold' }]}>{sc.percentage.toFixed(1)}%</Text>
+                    <Text style={[s.td, { flex: 0.75, color: C.muted }]}>{ordinal(percentileMap.get(sc.id) ?? 0)}</Text>
+                    {examSubjects.map(subj => {
+                      const pct = stuSubjMap?.get(subj.id)
+                      return <Text key={subj.id} style={[s.td, { flex: subjFlex, color: C.muted }]}>{pct !== undefined ? ordinal(pct) : '—'}</Text>
+                    })}
+                    <Text style={[s.td, { flex: 0.6, color: passes ? C.success : C.danger }]}>{passes ? 'Pass' : 'Fail'}</Text>
+                  </View>
+                )
+              })}
+            </>
+          )
+        })()}
 
         {/* Footer */}
         <View style={s.footer} fixed>

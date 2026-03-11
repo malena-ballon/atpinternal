@@ -1,11 +1,27 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { format, parseISO, isToday, isBefore, startOfDay, parse, isValid } from 'date-fns'
 import { Pencil, Trash2, Loader2, Check, CalendarDays, Plus } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 import type { SessionRow, SessionStatus, ClassRow, TeacherRow, SubjectRow } from '@/types'
 import StatusBadge from '@/app/dashboard/components/StatusBadge'
+
+interface Sel { r1: number; r2: number; c1: number; c2: number }
+
+// col 0=Date,1=Day,2=Time,3=Subject,4=Topic,5=Class,6=Teacher,7=Status,8=Students
+function getCell(s: SessionRow, c: number): string {
+  if (c === 0) return s.date ? format(parseISO(s.date), 'MMM d, yyyy') : ''
+  if (c === 1) return s.date ? format(parseISO(s.date), 'EEE') : ''
+  if (c === 2) return s.start_time && s.end_time ? `${fmt12(s.start_time)} – ${fmt12(s.end_time)}` : ''
+  if (c === 3) return s.subjects?.name ?? '—'
+  if (c === 4) return s.topic ?? '—'
+  if (c === 5) return s.classes?.name ?? '—'
+  if (c === 6) return s.teachers?.name ?? '—'
+  if (c === 7) return STATUS_OPTIONS.find(o => o.value === s.status)?.label ?? s.status
+  if (c === 8) return s.student_count > 0 ? String(s.student_count) : '—'
+  return ''
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -180,6 +196,67 @@ export default function ScheduleTable({
   const [saveError, setSaveError] = useState('')
   const [saved, setSaved] = useState(false)
   const savedSnapshot = useRef<DraftRow[]>([])
+  const [sel, setSel] = useState<Sel | null>(null)
+  const anchorRef = useRef<{ r: number; c: number } | null>(null)
+
+  function getEditRowCell(row: DraftRow, c: number): string {
+    if (c === 0) return row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? format(parseISO(row.date), 'M/d/yyyy') : row.date
+    if (c === 1) return row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? format(parseISO(row.date), 'EEE') : '—'
+    if (c === 2) return row.start_time
+    if (c === 3) return row.end_time
+    if (c === 4) return classes.find(cl => cl.id === row.class_id)?.name ?? '—'
+    if (c === 5) return teachers.find(t => t.id === row.teacher_id)?.name ?? '—'
+    if (c === 6) return (subjectsByClass.get(row.class_id) ?? []).find(s => s.id === row.subject_id)?.name ?? '—'
+    if (c === 7) return row.topic
+    if (c === 8) return STATUS_OPTIONS.find(o => o.value === row.status)?.label ?? row.status
+    return ''
+  }
+
+  useEffect(() => {
+    function handle(e: KeyboardEvent) {
+      if (!(e.metaKey || e.ctrlKey) || e.key !== 'c' || !sel) return
+      const el = document.activeElement
+      if ((el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) && el.selectionStart !== el.selectionEnd) return
+      e.preventDefault()
+      const [r1, r2] = [Math.min(sel.r1, sel.r2), Math.max(sel.r1, sel.r2)]
+      const [c1, c2] = [Math.min(sel.c1, sel.c2), Math.max(sel.c1, sel.c2)]
+      if (editMode) {
+        const text = rows.slice(r1, r2 + 1)
+          .map(row => Array.from({ length: c2 - c1 + 1 }, (_, i) => getEditRowCell(row, c1 + i)).join('\t'))
+          .join('\n')
+        navigator.clipboard.writeText(text)
+      } else {
+        const text = sessions.slice(r1, r2 + 1)
+          .map(s => Array.from({ length: c2 - c1 + 1 }, (_, i) => getCell(s, c1 + i)).join('\t'))
+          .join('\n')
+        navigator.clipboard.writeText(text)
+      }
+    }
+    document.addEventListener('keydown', handle)
+    return () => document.removeEventListener('keydown', handle)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel, sessions, rows, editMode])
+
+  function cellMouseDown(r: number, c: number, e: React.MouseEvent) {
+    if (e.shiftKey && anchorRef.current) {
+      setSel({ r1: anchorRef.current.r, r2: r, c1: anchorRef.current.c, c2: c })
+    } else {
+      anchorRef.current = { r, c }
+      setSel({ r1: r, r2: r, c1: c, c2: c })
+    }
+  }
+
+  function inSel(r: number, c: number) {
+    if (!sel) return false
+    return r >= Math.min(sel.r1, sel.r2) && r <= Math.max(sel.r1, sel.r2)
+      && c >= Math.min(sel.c1, sel.c2) && c <= Math.max(sel.c1, sel.c2)
+  }
+
+  function cs(r: number, c: number): React.CSSProperties {
+    return inSel(r, c)
+      ? { backgroundColor: 'rgba(11,181,199,0.1)', boxShadow: 'inset 0 0 0 1px rgba(11,181,199,0.45)' }
+      : {}
+  }
 
   const allSelected = sessions.length > 0 && selected.size === sessions.length
   const dirtyCount = rows.filter(r => r._dirty).length + deletedIds.size
@@ -190,12 +267,14 @@ export default function ScheduleTable({
     setDeletedIds(new Set())
     setSaveError('')
     setSaved(false)
+    setSel(null)
     setEditMode(true)
   }
 
   function discardAndExit() {
     setRows([...savedSnapshot.current])
     setDeletedIds(new Set())
+    setSel(null)
     setEditMode(false)
   }
 
@@ -379,6 +458,13 @@ export default function ScheduleTable({
         </div>
       )}
 
+      {/* Hint (view mode) */}
+      {!editMode && sessions.length > 0 && (
+        <p className="text-xs mb-3" style={{ color: 'var(--color-text-muted)' }}>
+          Click a cell to select · Shift+click to select range · Ctrl/Cmd+C to copy
+        </p>
+      )}
+
       {/* Table */}
       <div
         className="rounded-2xl overflow-x-auto"
@@ -404,11 +490,8 @@ export default function ScheduleTable({
                     />
                   </th>
                   {['Date', 'Day', 'Time', 'Subject', 'Topic', 'Class', 'Teacher', 'Status', 'Students'].map(h => (
-                    <th
-                      key={h}
-                      className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider"
-                      style={{ color: 'var(--color-text-muted)' }}
-                    >
+                    <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider"
+                      style={{ color: 'var(--color-text-muted)' }}>
                       {h}
                     </th>
                   ))}
@@ -424,39 +507,43 @@ export default function ScheduleTable({
                     }}
                   >
                     <td className="px-4 py-3 w-10">
-                      <input
-                        type="checkbox"
-                        checked={selected.has(s.id)}
-                        onChange={() => onSelectToggle(s.id)}
-                        className="rounded"
-                        style={{ accentColor: '#0BB5C7' }}
-                      />
+                      <input type="checkbox" checked={selected.has(s.id)} onChange={() => onSelectToggle(s.id)}
+                        className="rounded" style={{ accentColor: '#0BB5C7' }} />
                     </td>
-                    <td className="px-4 py-3 text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
+                    <td className="px-4 py-3 text-sm font-medium" style={{ color: 'var(--color-text-primary)', cursor: 'cell', ...cs(i, 0) }}
+                      onMouseDown={e => cellMouseDown(i, 0, e)}>
                       {format(parseISO(s.date), 'MMM d, yyyy')}
                     </td>
-                    <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                    <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)', cursor: 'cell', ...cs(i, 1) }}
+                      onMouseDown={e => cellMouseDown(i, 1, e)}>
                       {format(parseISO(s.date), 'EEE')}
                     </td>
-                    <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                    <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)', cursor: 'cell', ...cs(i, 2) }}
+                      onMouseDown={e => cellMouseDown(i, 2, e)}>
                       {fmt12(s.start_time)} – {fmt12(s.end_time)}
                     </td>
-                    <td className="px-4 py-3 text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
+                    <td className="px-4 py-3 text-sm font-medium" style={{ color: 'var(--color-text-primary)', cursor: 'cell', ...cs(i, 3) }}
+                      onMouseDown={e => cellMouseDown(i, 3, e)}>
                       {s.subjects?.name ?? '—'}
                     </td>
-                    <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                    <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)', cursor: 'cell', ...cs(i, 4) }}
+                      onMouseDown={e => cellMouseDown(i, 4, e)}>
                       {s.topic ?? '—'}
                     </td>
-                    <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                    <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)', cursor: 'cell', ...cs(i, 5) }}
+                      onMouseDown={e => cellMouseDown(i, 5, e)}>
                       {s.classes?.name ?? '—'}
                     </td>
-                    <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                    <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)', cursor: 'cell', ...cs(i, 6) }}
+                      onMouseDown={e => cellMouseDown(i, 6, e)}>
                       {s.teachers?.name ?? '—'}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3" style={{ cursor: 'cell', ...cs(i, 7) }}
+                      onMouseDown={e => cellMouseDown(i, 7, e)}>
                       <StatusBadge status={s.status as SessionStatus} size="sm" />
                     </td>
-                    <td className="px-4 py-3 text-sm text-center" style={{ color: 'var(--color-text-muted)' }}>
+                    <td className="px-4 py-3 text-sm text-center" style={{ color: 'var(--color-text-muted)', cursor: 'cell', ...cs(i, 8) }}
+                      onMouseDown={e => cellMouseDown(i, 8, e)}>
                       {s.student_count > 0 ? s.student_count : '—'}
                     </td>
                   </tr>
@@ -491,7 +578,8 @@ export default function ScheduleTable({
                     <td className="px-3 py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)', width: '36px' }}>{i + 1}</td>
 
                     {/* Date */}
-                    <td className="px-2 py-1.5" style={{ minWidth: '160px' }}>
+                    <td className="px-2 py-1.5" style={{ minWidth: '160px', ...cs(i, 0) }}
+                      onMouseDown={e => cellMouseDown(i, 0, e)}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                         <input type="text"
                           value={row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? format(parseISO(row.date), 'M/d/yyyy') : row.date}
@@ -512,26 +600,30 @@ export default function ScheduleTable({
                     </td>
 
                     {/* Day (auto) */}
-                    <td className="px-2 py-1.5 text-xs" style={{ color: 'var(--color-text-muted)', minWidth: '48px' }}>
+                    <td className="px-2 py-1.5 text-xs" style={{ color: 'var(--color-text-muted)', minWidth: '48px', cursor: 'cell', ...cs(i, 1) }}
+                      onMouseDown={e => cellMouseDown(i, 1, e)}>
                       {row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? format(parseISO(row.date), 'EEE') : '—'}
                     </td>
 
                     {/* Start */}
-                    <td className="px-2 py-1.5" style={{ minWidth: '110px' }}>
+                    <td className="px-2 py-1.5" style={{ minWidth: '110px', ...cs(i, 2) }}
+                      onMouseDown={e => cellMouseDown(i, 2, e)}>
                       <input type="time" value={row.start_time}
                         onChange={e => updateRow(row._key, { start_time: e.target.value })}
                         style={cellInput} />
                     </td>
 
                     {/* End */}
-                    <td className="px-2 py-1.5" style={{ minWidth: '110px' }}>
+                    <td className="px-2 py-1.5" style={{ minWidth: '110px', ...cs(i, 3) }}
+                      onMouseDown={e => cellMouseDown(i, 3, e)}>
                       <input type="time" value={row.end_time}
                         onChange={e => updateRow(row._key, { end_time: e.target.value })}
                         style={cellInput} />
                     </td>
 
                     {/* Class (read-only label for existing, dropdown for new) */}
-                    <td className="px-2 py-1.5" style={{ minWidth: '150px' }}>
+                    <td className="px-2 py-1.5" style={{ minWidth: '150px', ...cs(i, 4) }}
+                      onMouseDown={e => cellMouseDown(i, 4, e)}>
                       {row._isNew ? (
                         <select value={row.class_id}
                           onChange={e => updateRow(row._key, { class_id: e.target.value, subject_id: '' })}
@@ -547,7 +639,8 @@ export default function ScheduleTable({
                     </td>
 
                     {/* Teacher */}
-                    <td className="px-2 py-1.5" style={{ minWidth: '150px' }}>
+<td className="px-2 py-1.5" style={{ minWidth: '150px', ...cs(i, 5) }}
+                      onMouseDown={e => cellMouseDown(i, 5, e)}>
                       <select value={row.teacher_id}
                         onChange={e => updateRow(row._key, { teacher_id: e.target.value })}
                         style={{ ...cellInput, cursor: 'pointer' }}>
@@ -557,7 +650,8 @@ export default function ScheduleTable({
                     </td>
 
                     {/* Subject (filtered by class) */}
-                    <td className="px-2 py-1.5" style={{ minWidth: '150px' }}>
+                    <td className="px-2 py-1.5" style={{ minWidth: '150px', ...cs(i, 6) }}
+                      onMouseDown={e => cellMouseDown(i, 6, e)}>
                       <select value={row.subject_id}
                         onChange={e => updateRow(row._key, { subject_id: e.target.value })}
                         style={{ ...cellInput, cursor: 'pointer' }}>
@@ -567,14 +661,16 @@ export default function ScheduleTable({
                     </td>
 
                     {/* Topic */}
-                    <td className="px-2 py-1.5" style={{ minWidth: '160px' }}>
+                    <td className="px-2 py-1.5" style={{ minWidth: '160px', ...cs(i, 7) }}
+                      onMouseDown={e => cellMouseDown(i, 7, e)}>
                       <input type="text" value={row.topic} placeholder="Topic…"
                         onChange={e => updateRow(row._key, { topic: e.target.value })}
                         style={cellInput} />
                     </td>
 
                     {/* Status */}
-                    <td className="px-2 py-1.5" style={{ minWidth: '130px' }}>
+                    <td className="px-2 py-1.5" style={{ minWidth: '130px', ...cs(i, 8) }}
+                      onMouseDown={e => cellMouseDown(i, 8, e)}>
                       <select value={row.status}
                         onChange={e => { const v = e.target.value as SessionStatus; updateRow(row._key, { status: v, _statusLocked: true }) }}
                         className="text-xs font-semibold rounded-full px-2.5 py-1"

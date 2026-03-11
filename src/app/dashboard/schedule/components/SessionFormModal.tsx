@@ -69,7 +69,7 @@ export default function SessionFormModal({
     class_id:      session?.class_id ?? defaultClass?.id ?? '',
     subject_id:    session?.subject_id ?? '',
     teacher_id:    session?.teacher_id ?? '',
-    date:          mode === 'duplicate' ? '' : (session?.date ?? ''),
+    date:          mode === 'duplicate' ? '' : (session?.date ?? format(new Date(), 'yyyy-MM-dd')),
     start_time:    session?.start_time?.slice(0, 5) ?? '',
     end_time:      session?.end_time?.slice(0, 5) ?? '',
     zoom_link:     session?.zoom_link ?? defaultClass?.zoom_link ?? '',
@@ -136,6 +136,10 @@ export default function SessionFormModal({
     e.preventDefault()
     if (!form.class_id || !form.date || !form.start_time || !form.end_time) {
       setError('Class, date, and times are required.')
+      return
+    }
+    if (form.end_time <= form.start_time) {
+      setError('End time must be after start time.')
       return
     }
     setError('')

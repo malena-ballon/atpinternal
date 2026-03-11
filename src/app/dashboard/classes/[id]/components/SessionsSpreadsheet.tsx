@@ -3,10 +3,11 @@
 import { useState, useEffect, useRef } from 'react'
 import { format, parseISO, isToday, isBefore, startOfDay, parse, isValid } from 'date-fns'
 import { Plus, Trash2, Loader2, Check, CalendarDays, AlertTriangle, Pencil, Mail, Search, ChevronDown, X } from 'lucide-react'
+import EmailComposeStep, { type EmailRecipient } from './insights/EmailComposeStep'
+import { sendReportEmails } from '@/app/actions'
 import { createClient } from '@/utils/supabase/client'
 import type { SessionRow, SessionStatus, SubjectRow, TeacherRow, StudentRow } from '@/types'
 import ExportButton, { downloadBlob, pdfFileName } from './pdf/ExportButton'
-import EmailSessionsModal from './EmailSessionsModal'
 
 // ─── Mini MultiSelect (same pattern as master schedule) ───────────────────────
 interface MultiSelectProps {
@@ -237,6 +238,11 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
   const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set())
   const [studentCount] = useState(initialStudentCount.toString())
   const [showEmailModal, setShowEmailModal] = useState(false)
+  const [generatedPDF, setGeneratedPDF] = useState<Blob | null>(null)
+  const [pdfFilename, setPdfFilename] = useState('')
+  const [emailRecipients, setEmailRecipients] = useState<EmailRecipient[]>([])
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [isSending, setIsSending] = useState(false)
 
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
@@ -278,26 +284,77 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
   })
 
   async function handleExportPDF() {
-    const { pdf } = await import('@react-pdf/renderer')
-    const { default: SessionSchedulePDF } = await import('./pdf/SessionSchedulePDF')
-    const React = (await import('react')).default
-    const sessionRows = displayRows.map((row, i) => {
-      let day = '—'
-      try { if (row.date) day = new Date(row.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' }) } catch {}
-      return {
-        index: i + 1,
-        date: row.date ? format(parseISO(row.date), 'MMM d, yyyy') : '—',
-        day,
-        startTime: row.start_time,
-        endTime: row.end_time,
-        teacher: teachers.find(t => t.id === row.teacher_id)?.name ?? '',
-        subject: subjects.find(s => s.id === row.subject_id)?.name ?? '',
-        topic: row.topic || '',
-        status: row.status,
-      }
-    })
-    const blob = await pdf(React.createElement(SessionSchedulePDF, { className, sessions: sessionRows }) as any).toBlob()
-    downloadBlob(blob, pdfFileName(className, 'session-schedule'))
+    setIsGenerating(true)
+    try {
+      const { pdf } = await import('@react-pdf/renderer')
+      const { default: SessionSchedulePDF } = await import('./pdf/SessionSchedulePDF')
+      const React = (await import('react')).default
+      const sessionRows = displayRows.map((row, i) => {
+        let day = '—'
+        try { if (row.date) day = new Date(row.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' }) } catch {}
+        return {
+          index: i + 1,
+          date: row.date ? format(parseISO(row.date), 'MMM d, yyyy') : '—',
+          day,
+          startTime: row.start_time,
+          endTime: row.end_time,
+          teacher: teachers.find(t => t.id === row.teacher_id)?.name ?? '',
+          subject: subjects.find(s => s.id === row.subject_id)?.name ?? '',
+          topic: row.topic || '',
+          status: row.status,
+        }
+      })
+      const blob = await pdf(React.createElement(SessionSchedulePDF, { className, sessions: sessionRows }) as any).toBlob()
+      const fname = pdfFileName(className, 'session-schedule')
+      setGeneratedPDF(blob)
+      setPdfFilename(fname)
+      setEmailRecipients(
+        students.map(s => ({ id: s.id, name: s.name, email: s.email ?? null, enabled: true }))
+      )
+      setShowEmailModal(true)
+    } catch (e) {
+      console.error('PDF generation failed:', e)
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
+  async function handleDownloadOnly() {
+    if (generatedPDF) downloadBlob(generatedPDF, pdfFilename)
+    setShowEmailModal(false)
+  }
+
+  async function handleSendAndDownload(subject: string, body: string, signature: string, extraFiles: File[]) {
+    if (!generatedPDF) return
+    setIsSending(true)
+    try {
+      downloadBlob(generatedPDF, pdfFilename)
+      const toBase64 = (blob: Blob): Promise<string> => new Promise((res, rej) => {
+        const reader = new FileReader()
+        reader.onload = () => res((reader.result as string).split(',')[1])
+        reader.onerror = rej
+        reader.readAsDataURL(blob)
+      })
+      const pdfBase64 = await toBase64(generatedPDF)
+      const enabledRecipients = emailRecipients.filter(r => r.enabled && r.email)
+      const recipientData = enabledRecipients.map(r => ({
+        name: r.name,
+        email: r.email!,
+        pdfs: [{ filename: pdfFilename, base64: pdfBase64 }],
+      }))
+      const extraAttachData = await Promise.all(
+        extraFiles.map(async f => {
+          const base64 = await toBase64(f)
+          return { filename: f.name, base64 }
+        })
+      )
+      await sendReportEmails(recipientData, subject, body, signature, extraAttachData)
+      setShowEmailModal(false)
+    } catch (e) {
+      console.error('Send failed:', e)
+    } finally {
+      setIsSending(false)
+    }
   }
   const savedSnapshot = useRef<DraftRow[]>([])
   const editModeRef = useRef(false)
@@ -541,14 +598,7 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
         <div className="ml-auto flex items-center gap-2">
           {!editMode && (
             <>
-              <ExportButton onExport={handleExportPDF} label="Export PDF" />
-              <button
-                onClick={() => setShowEmailModal(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg"
-                style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)', backgroundColor: 'var(--color-bg)' }}
-              >
-                <Mail size={12} /> Email Schedule
-              </button>
+              <ExportButton onExport={handleExportPDF} label={isGenerating ? 'Preparing...' : 'Export PDF'} />
               <button onClick={enterEditMode}
                 className="flex items-center gap-2 px-4 py-1.5 text-sm font-semibold rounded-xl text-white"
                 style={{ backgroundColor: '#0BB5C7' }}>
@@ -803,15 +853,28 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
         </div>
       )}
 
-      {/* Email sessions modal */}
+      {/* Email compose modal */}
       {showEmailModal && (
-        <EmailSessionsModal
-          classId={classId}
-          className={className}
-          students={students}
-          sessionIds={displayRows.filter(r => r.id).map(r => r.id!)}
-          onClose={() => setShowEmailModal(false)}
-        />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div
+            className="w-full rounded-2xl p-5 shadow-2xl flex flex-col max-h-[90vh]"
+            style={{ maxWidth: 520, backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+          >
+            <div className="flex items-center gap-2 mb-4 shrink-0">
+              <Mail size={15} style={{ color: '#0BB5C7' }} />
+              <h2 className="text-sm font-bold" style={{ color: 'var(--color-text-primary)' }}>Send via Email</h2>
+            </div>
+            <EmailComposeStep
+              recipients={emailRecipients}
+              onRecipientsChange={setEmailRecipients}
+              pdfSummary="1 session schedule PDF auto-attached"
+              onSend={handleSendAndDownload}
+              onDownloadOnly={handleDownloadOnly}
+              onBack={() => setShowEmailModal(false)}
+              isSending={isSending}
+            />
+          </div>
+        </div>
       )}
 
       {/* Unsaved changes leave warning */}

@@ -1,11 +1,15 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { ordinal } from '../PerformanceInsights'
 import type { StudentStats } from '../PerformanceInsights'
 import ExportButton, { downloadBlob, pdfFileName } from '../pdf/ExportButton'
 import CopyableTable from '@/app/dashboard/components/CopyableTable'
+import type { SubjectRow } from '@/types'
+import { Mail } from 'lucide-react'
+import EmailComposeStep, { type EmailRecipient } from './EmailComposeStep'
+import { sendReportEmails } from '@/app/actions'
 
 interface Props {
   className: string
@@ -13,6 +17,7 @@ interface Props {
   totalExams: number
   totalStudents: number
   classPassingPct: number
+  subjects?: SubjectRow[]
 }
 
 function TrendLabel({ trend }: { trend: 'improving' | 'steady' | 'declining' }) {
@@ -33,95 +38,235 @@ const selectStyle: React.CSSProperties = {
   outline: 'none',
 }
 
-export default function PerStudentTab({ className, studentStats, totalExams, totalStudents, classPassingPct }: Props) {
+interface GeneratedPDF {
+  filename: string
+  blob: Blob
+  studentId: string
+}
+
+export default function PerStudentTab({ className, studentStats, totalExams, totalStudents, classPassingPct, subjects }: Props) {
   const [selectedId, setSelectedId] = useState<string>(studentStats[0]?.student.id ?? '')
-  
-  // NEW STATES FOR EXPORT MODAL
+
   const [showExportModal, setShowExportModal] = useState(false)
+  const [exportStep, setExportStep] = useState<'select' | 'email'>('select')
   const [exportSelection, setExportSelection] = useState<string[]>([])
   const [isExporting, setIsExporting] = useState(false)
+  const [isSending, setIsSending] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
 
+  const [generatedPDFs, setGeneratedPDFs] = useState<GeneratedPDF[]>([])
+  const [emailRecipients, setEmailRecipients] = useState<EmailRecipient[]>([])
+
   const stats = studentStats.find(s => s.student.id === selectedId)
-  const filteredStudents = studentStats.filter(s => 
+  const filteredStudents = studentStats.filter(s =>
     s.student.name.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
-  // UPDATED EXPORT FUNCTION: Zips all selected PDFs into one file
-  // UPDATED EXPORT FUNCTION: Single PDF directly, Multiple zipped
-  async function handleMultiExport() {
-    if (exportSelection.length === 0) return
-    setIsExporting(true)
-    
-    try {
-      // Dynamically import libraries so they don't slow down the initial page load
-      const { pdf } = await import('@react-pdf/renderer')
-      const { default: StudentReportPDF } = await import('../pdf/StudentReportPDF')
-      
-      // --- LOGIC 1: SINGLE PDF EXPORT ---
-      if (exportSelection.length === 1) {
-        const studentStat = studentStats.find(s => s.student.id === exportSelection[0])
-        if (!studentStat) throw new Error("Student not found")
-
-        const blob = await pdf(
-          <StudentReportPDF
-            className={className}
-            stats={studentStat}
-            totalStudents={totalStudents}
-            totalExams={totalExams}
-            classPassingPct={classPassingPct}
-          />
-        ).toBlob()
-        
-        const safeName = studentStat.student.name.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '')
-        const fileName = pdfFileName(`${className}_${safeName}`, 'Student-Report')
-        
-        // Download the single PDF directly
-        downloadBlob(blob, fileName)
-      } 
-      // --- LOGIC 2: MULTIPLE PDFS (ZIP EXPORT) ---
-      else {
-        const JSZip = (await import('jszip')).default
-        const zip = new JSZip()
-        const folderName = `${className.replace(/\s+/g, '_')}_Reports`
-        const reportsFolder = zip.folder(folderName)
-
-        // 1. Generate PDFs and add them to the zip folder
-        for (const id of exportSelection) {
-          const studentStat = studentStats.find(s => s.student.id === id)
-          if (!studentStat) continue
-
-          const blob = await pdf(
-            <StudentReportPDF
-              className={className}
-              stats={studentStat}
-              totalStudents={totalStudents}
-              totalExams={totalExams}
-              classPassingPct={classPassingPct}
-            />
-          ).toBlob()
-          
-          const safeName = studentStat.student.name.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '')
-          const fileName = pdfFileName(`${className}_${safeName}`, 'Student-Report')
-          
-          // Add the PDF blob into our virtual zip folder
-          reportsFolder?.file(fileName, blob)
-        }
-
-        // 2. Generate the final zip file
-        const zipBlob = await zip.generateAsync({ type: 'blob' })
-        
-        // 3. Download the single zip file
-        downloadBlob(zipBlob, `${folderName}.zip`)
+  function computeSubjPct(studentStat: (typeof studentStats)[number]): Record<string, Record<string, number>> {
+    const result: Record<string, Record<string, number>> = {}
+    for (const score of studentStat.scores) {
+      const examId = score.exam.id
+      const examSubjectIds = score.exam.subject_ids ?? (score.exam.subject_id ? [score.exam.subject_id] : [])
+      const subjMap: Record<string, number> = {}
+      for (const subjectId of examSubjectIds) {
+        const allEntries = studentStats
+          .map(st => {
+            const stScore = st.scores.find(s => s.exam.id === examId)
+            if (!stScore) return null
+            if (stScore.subject_scores?.length) {
+              const ss = stScore.subject_scores.find(x => x.subject_id === subjectId)
+              if (!ss) return null
+              return { studentId: st.student.id, pct: ss.total_items > 0 ? (ss.raw_score / ss.total_items) * 100 : 0 }
+            }
+            if (examSubjectIds.length === 1) return { studentId: st.student.id, pct: stScore.percentage }
+            return null
+          })
+          .filter(Boolean) as { studentId: string; pct: number }[]
+        if (!allEntries.length) continue
+        const mine = allEntries.find(x => x.studentId === studentStat.student.id)
+        if (!mine) continue
+        const countLE = allEntries.filter(x => x.pct <= mine.pct).length
+        subjMap[subjectId] = Math.min(99, Math.round((countLE / allEntries.length) * 100))
       }
+      if (Object.keys(subjMap).length) result[examId] = subjMap
+    }
+    return result
+  }
 
-    } catch (error) {
-      console.error("Export failed:", error)
-    } finally {
-      setIsExporting(false)
-      setShowExportModal(false)
+  async function generateStudentPDFs(studentIds: string[]): Promise<GeneratedPDF[]> {
+    const { pdf } = await import('@react-pdf/renderer')
+    const { default: StudentReportPDF } = await import('../pdf/StudentReportPDF')
+    const results: GeneratedPDF[] = []
+
+    for (const id of studentIds) {
+      const studentStat = studentStats.find(s => s.student.id === id)
+      if (!studentStat) continue
+      const subjPctData = computeSubjPct(studentStat)
+      const seen = new Set<string>()
+      const pdfSubjList: { id: string; name: string }[] = []
+      for (const score of studentStat.scores) {
+        const ids = score.exam.subject_ids ?? (score.exam.subject_id ? [score.exam.subject_id] : [])
+        for (const sid of ids) {
+          if (!seen.has(sid)) {
+            seen.add(sid)
+            pdfSubjList.push({ id: sid, name: subjects?.find(s => s.id === sid)?.name ?? '—' })
+          }
+        }
+      }
+      const blob = await pdf(
+        <StudentReportPDF
+          className={className}
+          stats={studentStat}
+          totalStudents={totalStudents}
+          totalExams={totalExams}
+          classPassingPct={classPassingPct}
+          subjectPercentileByExam={subjPctData}
+          pdfSubjects={pdfSubjList}
+        />
+      ).toBlob()
+      const safeName = studentStat.student.name.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '')
+      results.push({ filename: pdfFileName(`${className}_${safeName}`, 'Student-Report'), blob, studentId: id })
+    }
+    return results
+  }
+
+  async function downloadPDFs(pdfs: GeneratedPDF[]) {
+    if (pdfs.length === 0) return
+    if (pdfs.length === 1) {
+      downloadBlob(pdfs[0].blob, pdfs[0].filename)
+    } else {
+      const JSZip = (await import('jszip')).default
+      const zip = new JSZip()
+      const folderName = `${className.replace(/\s+/g, '_')}_Reports`
+      const folder = zip.folder(folderName)
+      for (const p of pdfs) folder?.file(p.filename, p.blob)
+      downloadBlob(await zip.generateAsync({ type: 'blob' }), `${folderName}.zip`)
     }
   }
+
+  async function goToEmailStep() {
+    if (exportSelection.length === 0) return
+    setIsExporting(true)
+    try {
+      const pdfs = await generateStudentPDFs(exportSelection)
+      setGeneratedPDFs(pdfs)
+      setEmailRecipients(
+        exportSelection.map(id => {
+          const s = studentStats.find(x => x.student.id === id)
+          return { id, name: s?.student.name ?? id, email: s?.student.email ?? null, enabled: true }
+        })
+      )
+      setExportStep('email')
+    } catch (e) {
+      console.error('PDF generation failed:', e)
+    } finally {
+      setIsExporting(false)
+    }
+  }
+
+  async function handleDownloadOnly() {
+    await downloadPDFs(generatedPDFs)
+    closeModal()
+  }
+
+  async function handleSendAndDownload(subject: string, body: string, signature: string, extraFiles: File[]) {
+    setIsSending(true)
+    try {
+      await downloadPDFs(generatedPDFs)
+      const toBase64 = (blob: Blob): Promise<string> => new Promise((res, rej) => {
+        const reader = new FileReader()
+        reader.onload = () => res((reader.result as string).split(',')[1])
+        reader.onerror = rej
+        reader.readAsDataURL(blob)
+      })
+      const enabledRecipients = emailRecipients.filter(r => r.enabled && r.email)
+      const recipientData = await Promise.all(
+        enabledRecipients.map(async r => {
+          const p = generatedPDFs.find(x => x.studentId === r.id)
+          return {
+            name: r.name,
+            email: r.email!,
+            pdfs: p ? [{ filename: p.filename, base64: await toBase64(p.blob) }] : [],
+          }
+        })
+      )
+      const extraAttachData = await Promise.all(
+        extraFiles.map(async f => ({ filename: f.name, base64: await toBase64(f) }))
+      )
+      await sendReportEmails(recipientData, subject, body, signature, extraAttachData)
+      closeModal()
+    } catch (e) {
+      console.error('Send failed:', e)
+    } finally {
+      setIsSending(false)
+    }
+  }
+
+  function openModal(preselect?: string) {
+    setExportSelection(preselect ? [preselect] : [])
+    setExportStep('select')
+    setSearchQuery('')
+    setGeneratedPDFs([])
+    setEmailRecipients([])
+    setShowExportModal(true)
+  }
+
+  function closeModal() {
+    setShowExportModal(false)
+    setExportStep('select')
+    setExportSelection([])
+    setSearchQuery('')
+    setGeneratedPDFs([])
+    setEmailRecipients([])
+  }
+
+  const relevantSubjects = useMemo(() => {
+    if (!stats) return [] as { id: string; name: string }[]
+    const seen = new Set<string>()
+    const result: { id: string; name: string }[] = []
+    for (const score of stats.scores) {
+      const ids = score.exam.subject_ids ?? (score.exam.subject_id ? [score.exam.subject_id] : [])
+      for (const id of ids) {
+        if (!seen.has(id)) {
+          seen.add(id)
+          result.push({ id, name: subjects?.find(s => s.id === id)?.name ?? '—' })
+        }
+      }
+    }
+    return result
+  }, [stats, subjects])
+
+  const subjectPercentileByExam = useMemo(() => {
+    if (!stats) return new Map<string, Map<string, number>>()
+    const result = new Map<string, Map<string, number>>()
+    for (const score of stats.scores) {
+      const examId = score.exam.id
+      const examSubjectIds = score.exam.subject_ids ?? (score.exam.subject_id ? [score.exam.subject_id] : [])
+      const subjMap = new Map<string, number>()
+      for (const subjectId of examSubjectIds) {
+        const allEntries = studentStats
+          .map(st => {
+            const stScore = st.scores.find(s => s.exam.id === examId)
+            if (!stScore) return null
+            if (stScore.subject_scores?.length) {
+              const ss = stScore.subject_scores.find(x => x.subject_id === subjectId)
+              if (!ss) return null
+              return { studentId: st.student.id, pct: ss.total_items > 0 ? (ss.raw_score / ss.total_items) * 100 : 0 }
+            }
+            if (examSubjectIds.length === 1) return { studentId: st.student.id, pct: stScore.percentage }
+            return null
+          })
+          .filter(Boolean) as { studentId: string; pct: number }[]
+        if (!allEntries.length) continue
+        const mine = allEntries.find(x => x.studentId === stats.student.id)
+        if (!mine) continue
+        const countLE = allEntries.filter(x => x.pct <= mine.pct).length
+        subjMap.set(subjectId, Math.min(99, Math.round((countLE / allEntries.length) * 100)))
+      }
+      if (subjMap.size > 0) result.set(examId, subjMap)
+    }
+    return result
+  }, [stats, studentStats])
 
   const trendData = stats?.scores.map(s => ({
     name: s.exam.name,
@@ -130,94 +275,91 @@ export default function PerStudentTab({ className, studentStats, totalExams, tot
 
   return (
     <div className="space-y-4">
-      {/* EXPORT MODAL UI */}
+      {/* EXPORT MODAL */}
       {showExportModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-          <div 
-            className="w-full max-w-md rounded-2xl p-5 shadow-2xl flex flex-col max-h-[80vh]" 
-            style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+          <div
+            className="w-full rounded-2xl p-5 shadow-2xl flex flex-col max-h-[90vh]"
+            style={{
+              maxWidth: exportStep === 'email' ? 520 : 448,
+              backgroundColor: 'var(--color-surface)',
+              border: '1px solid var(--color-border)',
+            }}
           >
-            <h2 className="text-lg font-bold mb-4" style={{ color: 'var(--color-text-primary)' }}>Export Student Reports</h2>
-
-            {/* NEW: Search Bar */}
-            <div className="mb-4">
-              <input
-                type="text"
-                placeholder="Search students..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full px-3 py-2 text-sm rounded-xl focus:ring-2 focus:ring-[#0BB5C7] transition-all"
-                style={{ 
-                  backgroundColor: 'var(--color-bg)', 
-                  color: 'var(--color-text-primary)', 
-                  border: '1px solid var(--color-border)', 
-                  outline: 'none' 
-                }}
-              />
-            </div>
-
-            <div className="flex gap-2 mb-4">
-              <button 
-                // Updated to only select the *filtered* students
-                onClick={() => {
-                  const newSelection = new Set(exportSelection)
-                  filteredStudents.forEach(s => newSelection.add(s.student.id))
-                  setExportSelection(Array.from(newSelection))
-                }} 
-                className="text-xs font-medium px-3 py-1.5 rounded-lg bg-[#0BB5C7]/10 text-[#0BB5C7] hover:bg-[#0BB5C7]/20 transition-colors"
-              >
-                Select All
-              </button>
-              <button 
-                onClick={() => setExportSelection([])} 
-                className="text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
-                style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-muted)', border: '1px solid var(--color-border)' }}
-              >
-                Clear All
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto mb-4 space-y-1.5 pr-2">
-              {filteredStudents.length > 0 ? (
-                filteredStudents.map(s => (
-                  <label key={s.student.id} className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-white/5 cursor-pointer transition-colors">
-                    <input
-                      type="checkbox"
-                      checked={exportSelection.includes(s.student.id)}
-                      onChange={(e) => {
-                        if (e.target.checked) setExportSelection(prev => [...prev, s.student.id])
-                        else setExportSelection(prev => prev.filter(id => id !== s.student.id))
-                      }}
-                      className="w-4 h-4 rounded border-gray-400 accent-[#0BB5C7] cursor-pointer"
-                    />
-                    <span className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
-                      {s.student.name}
-                    </span>
-                  </label>
-                ))
+            <div className="flex items-center gap-2 mb-4 shrink-0">
+              {exportStep === 'email' ? (
+                <>
+                  <Mail size={15} style={{ color: '#0BB5C7' }} />
+                  <h2 className="text-sm font-bold" style={{ color: 'var(--color-text-primary)' }}>Send via Email</h2>
+                </>
               ) : (
-                <p className="text-sm text-center py-4" style={{ color: 'var(--color-text-muted)' }}>
-                  No students match your search.
-                </p>
+                <h2 className="text-lg font-bold" style={{ color: 'var(--color-text-primary)' }}>Export Student Reports</h2>
               )}
             </div>
 
-            <div className="flex justify-end gap-3 mt-auto pt-4" style={{ borderTop: '1px solid var(--color-border)' }}>
-              <button 
-                onClick={() => setShowExportModal(false)} 
-                className="px-4 py-2 text-sm font-medium rounded-xl hover:bg-white/5 transition-colors" 
-                style={{ color: 'var(--color-text-muted)' }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleMultiExport}
-                disabled={exportSelection.length === 0 || isExporting}
-                className="px-4 py-2 text-sm font-medium rounded-xl bg-[#0BB5C7] text-white hover:bg-[#099aa8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-              >
-                {isExporting ? 'Exporting...' : `Export Selected (${exportSelection.length})`}
-              </button>
-            </div>
+            {exportStep === 'select' && (
+              <>
+                <input
+                  type="text"
+                  placeholder="Search students..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  className="w-full px-3 py-2 text-sm rounded-xl mb-3 shrink-0"
+                  style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)', outline: 'none' }}
+                />
+                <div className="flex gap-2 mb-3 shrink-0">
+                  <button
+                    onClick={() => { const s = new Set(exportSelection); filteredStudents.forEach(st => s.add(st.student.id)); setExportSelection(Array.from(s)) }}
+                    className="text-xs font-medium px-3 py-1.5 rounded-lg bg-[#0BB5C7]/10 text-[#0BB5C7]"
+                  >Select All</button>
+                  <button
+                    onClick={() => setExportSelection([])}
+                    className="text-xs font-medium px-3 py-1.5 rounded-lg"
+                    style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-muted)', border: '1px solid var(--color-border)' }}
+                  >Clear All</button>
+                </div>
+                <div className="flex-1 overflow-y-auto mb-4 space-y-1.5 pr-2">
+                  {filteredStudents.length > 0 ? filteredStudents.map(s => (
+                    <label key={s.student.id} className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-white/5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={exportSelection.includes(s.student.id)}
+                        onChange={e => {
+                          if (e.target.checked) setExportSelection(prev => [...prev, s.student.id])
+                          else setExportSelection(prev => prev.filter(id => id !== s.student.id))
+                        }}
+                        className="w-4 h-4 accent-[#0BB5C7] cursor-pointer"
+                      />
+                      <span className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>{s.student.name}</span>
+                    </label>
+                  )) : (
+                    <p className="text-sm text-center py-4" style={{ color: 'var(--color-text-muted)' }}>No students match.</p>
+                  )}
+                </div>
+                <div className="flex justify-end gap-3 pt-4 shrink-0" style={{ borderTop: '1px solid var(--color-border)' }}>
+                  <button onClick={closeModal} className="px-4 py-2 text-sm font-medium rounded-xl" style={{ color: 'var(--color-text-muted)' }}>Cancel</button>
+                  <button
+                    onClick={goToEmailStep}
+                    disabled={exportSelection.length === 0 || isExporting}
+                    className="px-4 py-2 text-sm font-medium rounded-xl bg-[#0BB5C7] text-white disabled:opacity-50"
+                  >
+                    {isExporting ? 'Preparing...' : `Next → (${exportSelection.length})`}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {exportStep === 'email' && (
+              <EmailComposeStep
+                recipients={emailRecipients}
+                onRecipientsChange={setEmailRecipients}
+                pdfSummary={`${generatedPDFs.length} PDF${generatedPDFs.length !== 1 ? 's' : ''} auto-attached`}
+                onSend={handleSendAndDownload}
+                onDownloadOnly={handleDownloadOnly}
+                onBack={() => setExportStep('select')}
+                isSending={isSending}
+              />
+            )}
           </div>
         </div>
       )}
@@ -235,14 +377,7 @@ export default function PerStudentTab({ className, studentStats, totalExams, tot
           </select>
         </div>
         {stats && (
-          <ExportButton 
-            onExport={async() => {
-              // Automatically check the currently viewed student when opening the modal
-              setExportSelection([selectedId])
-              setShowExportModal(true)
-            }} 
-            label="Export Student Reports" 
-          />
+          <ExportButton onExport={async () => openModal(selectedId)} label="Export Student Reports" />
         )}
       </div>
 
@@ -252,7 +387,6 @@ export default function PerStudentTab({ className, studentStats, totalExams, tot
 
       {stats && (
         <>
-          {/* Summary cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {[
               { label: 'Overall Avg', value: stats.avgPct.toFixed(1) + '%' },
@@ -267,7 +401,6 @@ export default function PerStudentTab({ className, studentStats, totalExams, tot
             ))}
           </div>
 
-          {/* Trend + High + Low */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div className="rounded-xl p-4" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
               <div className="text-xs mb-1" style={{ color: 'var(--color-text-muted)' }}>Performance Trend</div>
@@ -278,22 +411,17 @@ export default function PerStudentTab({ className, studentStats, totalExams, tot
               <div className="text-lg font-bold" style={{ color: 'var(--color-success)' }}>
                 {stats.highest ? `${stats.highest.pct.toFixed(1)}%` : '—'}
               </div>
-              {stats.highest && (
-                <div className="text-xs truncate mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{stats.highest.exam.name}</div>
-              )}
+              {stats.highest && <div className="text-xs truncate mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{stats.highest.exam.name}</div>}
             </div>
             <div className="rounded-xl p-4" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
               <div className="text-xs mb-1" style={{ color: 'var(--color-text-muted)' }}>Lowest Score</div>
               <div className="text-lg font-bold" style={{ color: 'var(--color-danger)' }}>
                 {stats.lowest ? `${stats.lowest.pct.toFixed(1)}%` : '—'}
               </div>
-              {stats.lowest && (
-                <div className="text-xs truncate mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{stats.lowest.exam.name}</div>
-              )}
+              {stats.lowest && <div className="text-xs truncate mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{stats.lowest.exam.name}</div>}
             </div>
           </div>
 
-          {/* Trend chart */}
           {trendData.length >= 2 && (
             <div>
               <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--color-text-secondary)' }}>Performance Trend</h3>
@@ -314,19 +442,28 @@ export default function PerStudentTab({ className, studentStats, totalExams, tot
             </div>
           )}
 
-          {/* Score per exam table */}
           {stats.scores.length > 0 ? (
             <div>
               <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--color-text-secondary)' }}>Score Per Exam</h3>
               <CopyableTable
-                headers={['Exam', 'Score', '%', 'Result']}
+                headers={['Exam', 'Score', '%', ...relevantSubjects.map(s => `${s.name} Pct.`), 'Result']}
                 rows={stats.scores.map(s => {
                   const effectivePassing = s.exam.passing_pct_override ?? classPassingPct
                   const passes = s.percentage >= effectivePassing
+                  const examSubjMap = subjectPercentileByExam.get(s.exam.id)
                   return [
                     { display: <span style={{ color: 'var(--color-text-primary)', fontWeight: 500 }}>{s.exam.name}</span>, copy: s.exam.name },
                     { display: <span style={{ color: 'var(--color-text-secondary)', fontFamily: 'monospace', fontSize: 12 }}>{s.raw_score} / {s.total_items}</span>, copy: `${s.raw_score} / ${s.total_items}` },
                     { display: <span style={{ color: 'var(--color-text-primary)', fontFamily: 'monospace', fontSize: 12, fontWeight: 600 }}>{s.percentage.toFixed(1)}%</span>, copy: s.percentage.toFixed(1) + '%' },
+                    ...relevantSubjects.map(subj => {
+                      const pct = examSubjMap?.get(subj.id)
+                      return {
+                        display: pct !== undefined
+                          ? <span style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>{ordinal(pct)}</span>
+                          : <span style={{ color: 'var(--color-text-muted)' }}>—</span>,
+                        copy: pct !== undefined ? ordinal(pct) : '—',
+                      }
+                    }),
                     {
                       display: <span className="text-xs px-1.5 py-0.5 rounded font-medium"
                         style={passes ? { backgroundColor: 'rgba(34,197,94,0.12)', color: 'var(--color-success)' } : { backgroundColor: 'rgba(239,68,68,0.12)', color: 'var(--color-danger)' }}>

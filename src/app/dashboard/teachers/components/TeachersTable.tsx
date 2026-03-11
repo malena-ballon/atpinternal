@@ -2,12 +2,12 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Plus, Search, Pencil, Trash2, X, Check, UserX, Users, UserCheck, Clock } from 'lucide-react'
+import { Plus, Search, Pencil, Trash2, X, Check, UserX, Users, UserCheck, Clock, Send, Loader2 } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 import type { TeacherRow } from '@/types'
 import type { TeacherWithStats, PendingUser } from '../page'
 import TeacherFormModal from './TeacherFormModal'
-import { approveUser, rejectUser } from '@/app/actions'
+import { approveUser, rejectUser, sendTeacherInvite } from '@/app/actions'
 
 const DAY_ABBR: Record<string, string> = {
   Monday: 'Mon', Tuesday: 'Tue', Wednesday: 'Wed',
@@ -21,6 +21,8 @@ interface Props {
   activeTeachers: TeacherWithStats[]
   pendingUsers: PendingUser[]
   invitedTeachers: TeacherWithStats[]
+  currentUserRole: 'admin' | 'teacher'
+  currentTeacherId: string | null
 }
 
 function Initials({ name }: { name: string }) {
@@ -56,7 +58,8 @@ function AvailabilityTags({ teacher }: { teacher: TeacherRow }) {
   )
 }
 
-export default function TeachersTable({ activeTeachers, pendingUsers, invitedTeachers }: Props) {
+export default function TeachersTable({ activeTeachers, pendingUsers, invitedTeachers, currentUserRole, currentTeacherId }: Props) {
+  const isAdmin = currentUserRole === 'admin'
   const router = useRouter()
   const [tab, setTab] = useState<Tab>('teachers')
   const [teachers, setTeachers] = useState(activeTeachers)
@@ -69,6 +72,7 @@ export default function TeachersTable({ activeTeachers, pendingUsers, invitedTea
   const [deleting, setDeleting] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [actionError, setActionError] = useState('')
+  const [inviteSuccess, setInviteSuccess] = useState<string | null>(null)
 
   const currentList = tab === 'teachers' ? teachers : invited
   const filtered = currentList.filter(t => {
@@ -116,6 +120,17 @@ export default function TeachersTable({ activeTeachers, pendingUsers, invitedTea
     router.refresh()
   }
 
+  async function handleSendInvite(teacherId: string) {
+    setActionLoading('invite-' + teacherId)
+    setActionError('')
+    setInviteSuccess(null)
+    const res = await sendTeacherInvite(teacherId)
+    setActionLoading(null)
+    if (!res.ok) { setActionError(res.error ?? 'Failed to send invite'); return }
+    setInviteSuccess(teacherId)
+    setTimeout(() => setInviteSuccess(null), 3000)
+  }
+
   async function handleReject(userId: string) {
     setActionLoading(userId + '-reject')
     setActionError('')
@@ -135,17 +150,17 @@ export default function TeachersTable({ activeTeachers, pendingUsers, invitedTea
     outline: 'none',
   }
 
-  const TABS: { id: Tab; label: string; icon: React.ReactNode; count: number }[] = [
+  const TABS: { id: Tab; label: string; icon: React.ReactNode; count: number; adminOnly?: boolean }[] = [
     { id: 'teachers', label: 'Teachers', icon: <UserCheck size={14} />, count: teachers.length },
-    { id: 'pending', label: 'Pending', icon: <Clock size={14} />, count: pending.length },
-    { id: 'invited', label: 'Invited', icon: <Users size={14} />, count: invited.length },
+    { id: 'pending', label: 'Pending', icon: <Clock size={14} />, count: pending.length, adminOnly: true },
+    { id: 'invited', label: 'Invited', icon: <Users size={14} />, count: invited.length, adminOnly: true },
   ]
 
   return (
     <>
       {/* Tab bar */}
       <div className="flex gap-2">
-        {TABS.map(t => (
+        {TABS.filter(t => !t.adminOnly || isAdmin).map(t => (
           <button
             key={t.id}
             onClick={() => { setTab(t.id); setQ('') }}
@@ -169,6 +184,11 @@ export default function TeachersTable({ activeTeachers, pendingUsers, invitedTea
       {actionError && (
         <p className="text-sm px-4 py-2 rounded-lg" style={{ backgroundColor: 'rgba(239,68,68,0.08)', color: 'var(--color-danger)' }}>
           {actionError}
+        </p>
+      )}
+      {inviteSuccess && (
+        <p className="text-sm px-4 py-2 rounded-lg" style={{ backgroundColor: 'rgba(34,197,94,0.08)', color: '#16a34a' }}>
+          Invite email sent successfully.
         </p>
       )}
 
@@ -254,7 +274,7 @@ export default function TeachersTable({ activeTeachers, pendingUsers, invitedTea
                 <X size={13} /> Clear
               </button>
             )}
-            {tab === 'invited' && (
+            {tab === 'invited' && isAdmin && (
               <div className="ml-auto">
                 <button
                   onClick={() => setShowCreate(true)}
@@ -329,16 +349,42 @@ export default function TeachersTable({ activeTeachers, pendingUsers, invitedTea
                           </div>
                         ) : (
                           <div className="flex items-center gap-1">
-                            <button onClick={() => setEditTarget(t)}
-                              className="w-7 h-7 rounded-lg flex items-center justify-center"
-                              style={{ color: 'var(--color-text-muted)' }} title="Edit">
-                              <Pencil size={13} />
-                            </button>
-                            <button onClick={() => setDeleteConfirm(t.id)}
-                              className="w-7 h-7 rounded-lg flex items-center justify-center"
-                              style={{ color: 'var(--color-danger)' }} title="Delete">
-                              <Trash2 size={13} />
-                            </button>
+                            {tab === 'invited' && isAdmin && (
+                              <button
+                                onClick={() => handleSendInvite(t.id)}
+                                disabled={actionLoading === 'invite-' + t.id}
+                                className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg font-medium disabled:opacity-50"
+                                style={{ backgroundColor: 'rgba(11,181,199,0.1)', color: '#0BB5C7' }}
+                                title="Send invite email"
+                              >
+                                {actionLoading === 'invite-' + t.id
+                                  ? <Loader2 size={11} className="animate-spin" />
+                                  : <Send size={11} />}
+                                {inviteSuccess === t.id ? 'Sent!' : 'Invite'}
+                              </button>
+                            )}
+                            {(isAdmin || t.id === currentTeacherId) ? (
+                              <>
+                                <button onClick={() => setEditTarget(t)}
+                                  className="w-7 h-7 rounded-lg flex items-center justify-center"
+                                  style={{ color: 'var(--color-text-muted)' }} title="Edit">
+                                  <Pencil size={13} />
+                                </button>
+                                {isAdmin && (
+                                  <button onClick={() => setDeleteConfirm(t.id)}
+                                    className="w-7 h-7 rounded-lg flex items-center justify-center"
+                                    style={{ color: 'var(--color-danger)' }} title="Delete">
+                                    <Trash2 size={13} />
+                                  </button>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-xs px-2 py-1 rounded-lg"
+                                style={{ color: 'var(--color-text-muted)', border: '1px solid var(--color-border)' }}
+                                title="Contact admin to make changes">
+                                No access
+                              </span>
+                            )}
                           </div>
                         )}
                       </td>

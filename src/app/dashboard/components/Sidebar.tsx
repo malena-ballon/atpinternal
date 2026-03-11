@@ -115,7 +115,7 @@ export default function Sidebar({ name, role }: Props) {
         {role === 'admin' && (
           <>
             <NavItem href="/dashboard/notebook" icon={BookMarked} label="Notebook" />
-            <NavItem href="/dashboard/malenapage" icon={HeartIcon} label="Malena" />
+            <NavItem href="/dashboard/malena" icon={HeartIcon} label="Malena" />
           </>
         )}
       </nav>

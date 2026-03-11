@@ -45,9 +45,11 @@ interface Props {
   totalStudents: number
   totalExams: number
   classPassingPct: number
+  subjectPercentileByExam?: Record<string, Record<string, number>>
+  pdfSubjects?: { id: string; name: string }[]
 }
 
-export default function StudentReportPDF({ className, stats, totalStudents, totalExams, classPassingPct }: Props) {
+export default function StudentReportPDF({ className, stats, totalStudents, totalExams, classPassingPct, subjectPercentileByExam, pdfSubjects }: Props) {
   const genDate = new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })
   const trendLabel = stats.trend === 'improving' ? '↑ Improving' : stats.trend === 'declining' ? '↓ Declining' : '→ Steady'
   const trendColor = stats.trend === 'improving' ? C.success : stats.trend === 'declining' ? C.danger : C.muted
@@ -118,29 +120,40 @@ export default function StudentReportPDF({ className, stats, totalStudents, tota
         )}
 
         {/* Score per exam table */}
-        {stats.scores.length > 0 && (
-          <>
-            <Text style={s.sectionTitle}>Detailed Scores</Text>
-            <View style={s.tableHeader}>
-              {['Exam', 'Subject', 'Score', '%', 'Result'].map((h, i) => (
-                <Text key={h} style={[s.th, { flex: [2.5, 1.5, 1, 0.8, 0.8][i] }]}>{h}</Text>
-              ))}
-            </View>
-            {stats.scores.map((sc, i) => {
-              const effectivePassing = sc.exam.passing_pct_override ?? classPassingPct
-              const passes = sc.percentage >= effectivePassing
-              return (
-                <View key={sc.id} style={i % 2 === 1 ? s.tableRowAlt : s.tableRow}>
-                  <Text style={[s.td, { flex: 2.5, fontFamily: 'Helvetica-Bold', color: C.dark }]}>{sc.exam.name}</Text>
-                  <Text style={[s.td, { flex: 1.5, color: C.muted }]}>{sc.exam.subjects?.name ?? '—'}</Text>
-                  <Text style={[s.td, { flex: 1 }]}>{sc.raw_score} / {sc.total_items}</Text>
-                  <Text style={[s.td, { flex: 0.8, fontFamily: 'Helvetica-Bold' }]}>{sc.percentage.toFixed(1)}%</Text>
-                  <Text style={[s.td, { flex: 0.8, color: passes ? C.success : C.danger }]}>{passes ? 'Pass' : 'Fail'}</Text>
-                </View>
-              )
-            })}
-          </>
-        )}
+        {stats.scores.length > 0 && (() => {
+          const subjCols = pdfSubjects ?? []
+          const abbrev = (name: string) => name.length > 7 ? name.slice(0, 6) + '.' : name
+          const subjFlex = 0.6
+          const headers = ['Exam', 'Score', '%', ...subjCols.map(s => abbrev(s.name)), 'Result']
+          const flexes = [1.8, 0.85, 0.55, ...subjCols.map(() => subjFlex), 0.55]
+          return (
+            <>
+              <Text style={s.sectionTitle}>Detailed Scores</Text>
+              <View style={s.tableHeader}>
+                {headers.map((h, i) => (
+                  <Text key={h + i} style={[s.th, { flex: flexes[i] }]}>{h}</Text>
+                ))}
+              </View>
+              {stats.scores.map((sc, i) => {
+                const effectivePassing = sc.exam.passing_pct_override ?? classPassingPct
+                const passes = sc.percentage >= effectivePassing
+                const examSubjMap = subjectPercentileByExam?.[sc.exam.id]
+                return (
+                  <View key={sc.id} style={i % 2 === 1 ? s.tableRowAlt : s.tableRow}>
+                    <Text style={[s.td, { flex: 1.8, fontFamily: 'Helvetica-Bold', color: C.dark }]}>{sc.exam.name}</Text>
+                    <Text style={[s.td, { flex: 0.85 }]}>{sc.raw_score} / {sc.total_items}</Text>
+                    <Text style={[s.td, { flex: 0.55, fontFamily: 'Helvetica-Bold' }]}>{sc.percentage.toFixed(1)}%</Text>
+                    {subjCols.map(subj => {
+                      const pct = examSubjMap?.[subj.id]
+                      return <Text key={subj.id} style={[s.td, { flex: subjFlex, color: C.muted }]}>{pct !== undefined ? ordinal(pct) : '—'}</Text>
+                    })}
+                    <Text style={[s.td, { flex: 0.55, color: passes ? C.success : C.danger }]}>{passes ? 'Pass' : 'Fail'}</Text>
+                  </View>
+                )
+              })}
+            </>
+          )
+        })()}
 
         {stats.scores.length === 0 && (
           <Text style={{ fontSize: 9, color: C.muted, textAlign: 'center', marginTop: 20 }}>No exam scores recorded for this student.</Text>

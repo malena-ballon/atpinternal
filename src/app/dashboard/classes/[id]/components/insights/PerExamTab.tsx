@@ -6,11 +6,16 @@ import { ordinal } from '../PerformanceInsights'
 import type { ExamStats } from '../PerformanceInsights'
 import ExportButton, { downloadBlob, pdfFileName } from '../pdf/ExportButton'
 import CopyableTable from '@/app/dashboard/components/CopyableTable'
+import type { SubjectRow } from '@/types'
+import { Mail } from 'lucide-react'
+import EmailComposeStep, { type EmailRecipient } from './EmailComposeStep'
+import { sendReportEmails } from '@/app/actions'
 
 interface Props {
   className: string
   examStats: ExamStats[]
   classPassingPct: number
+  subjects?: SubjectRow[]
 }
 
 const DIST_COLORS = ['#22c55e', '#0BB5C7', '#f59e0b', '#f97316', '#ef4444']
@@ -27,93 +32,198 @@ const selectStyle: React.CSSProperties = {
   outline: 'none',
 }
 
-export default function PerExamTab({ className, examStats, classPassingPct }: Props) {
+interface GeneratedPDF {
+  filename: string
+  blob: Blob
+  studentId?: string
+}
+
+export default function PerExamTab({ className, examStats, classPassingPct, subjects }: Props) {
   const [selectedId, setSelectedId] = useState<string>(examStats[0]?.exam.id ?? '')
-  
-  // NEW STATES FOR EXPORT MODAL
+
+  // Export modal state
   const [showExportModal, setShowExportModal] = useState(false)
+  const [exportStep, setExportStep] = useState<1 | 2 | 3 | 'email'>(1)
   const [exportSelection, setExportSelection] = useState<string[]>([])
+  const [reportType, setReportType] = useState<'class' | 'individual'>('class')
+  const [classNameMode, setClassNameMode] = useState<'all' | 'top5'>('all')
+  const [exportStudentIds, setExportStudentIds] = useState<string[]>([])
   const [isExporting, setIsExporting] = useState(false)
+  const [isSending, setIsSending] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+
+  // Email step state
+  const [generatedPDFs, setGeneratedPDFs] = useState<GeneratedPDF[]>([])
+  const [emailRecipients, setEmailRecipients] = useState<EmailRecipient[]>([])
 
   const stats = examStats.find(s => s.exam.id === selectedId)
 
-  // Filter exams based on search query
-  const filteredExams = examStats.filter(s => 
+  const filteredExams = examStats.filter(s =>
     s.exam.name.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
-  // UPDATED EXPORT FUNCTION: Zips all selected Exam PDFs into one file
-// UPDATED EXPORT FUNCTION: Single PDF directly, Multiple zipped
-  async function handleMultiExport() {
-    if (exportSelection.length === 0) return
-    setIsExporting(true)
-    
-    try {
-      const { pdf } = await import('@react-pdf/renderer')
-      const { default: ExamReportPDF } = await import('../pdf/ExamReportPDF')
-      
-      // --- LOGIC 1: SINGLE PDF EXPORT ---
-      if (exportSelection.length === 1) {
-        const examStat = examStats.find(s => s.exam.id === exportSelection[0])
-        if (!examStat) throw new Error("Exam not found")
-
-        const blob = await pdf(
-          <ExamReportPDF 
-            className={className} 
-            stats={examStat} 
-            classPassingPct={classPassingPct} 
-          />
-        ).toBlob()
-        
-        const safeName = examStat.exam.name.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '')
-        const fileName = pdfFileName(`${className}_${safeName}`, 'Exam-Report')
-        
-        // Download the single PDF directly
-        downloadBlob(blob, fileName)
-      } 
-      // --- LOGIC 2: MULTIPLE PDFS (ZIP EXPORT) ---
-      else {
-        const JSZip = (await import('jszip')).default
-        const zip = new JSZip()
-        const folderName = `${className.replace(/\s+/g, '_')}_Exam_Reports`
-        const reportsFolder = zip.folder(folderName)
-
-        // Generate PDFs and add them to the zip folder
-        for (const id of exportSelection) {
-          const examStat = examStats.find(s => s.exam.id === id)
-          if (!examStat) continue
-
-          const blob = await pdf(
-            <ExamReportPDF 
-              className={className} 
-              stats={examStat} 
-              classPassingPct={classPassingPct} 
-            />
-          ).toBlob()
-          
-          const safeName = examStat.exam.name.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '')
-          const fileName = pdfFileName(`${className}_${safeName}`, 'Exam-Report')
-          
-          reportsFolder?.file(fileName, blob)
+  // Students in selected exams (for step 3 + email recipients)
+  const studentsInSelectedExams = useMemo(() => {
+    const seen = new Map<string, { name: string; email: string | null }>()
+    for (const id of exportSelection) {
+      const es = examStats.find(s => s.exam.id === id)
+      if (!es) continue
+      for (const sc of es.scores) {
+        if (sc.student_id && sc.students?.name) {
+          seen.set(sc.student_id, { name: sc.students.name, email: sc.students.email ?? null })
         }
-
-        // Generate and download the final zip file
-        const zipBlob = await zip.generateAsync({ type: 'blob' })
-        downloadBlob(zipBlob, `${folderName}.zip`)
       }
+    }
+    return Array.from(seen.entries())
+      .map(([id, { name, email }]) => ({ id, name, email }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [exportSelection, examStats])
 
-    } catch (error) {
-      console.error("Export failed:", error)
+  const filteredStudents = studentsInSelectedExams.filter(s =>
+    s.name.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+
+  function openExportModal(preselect?: string) {
+    setExportSelection(preselect ? [preselect] : [])
+    setExportStep(1)
+    setReportType('class')
+    setClassNameMode('all')
+    setExportStudentIds([])
+    setSearchQuery('')
+    setGeneratedPDFs([])
+    setEmailRecipients([])
+    setShowExportModal(true)
+  }
+
+  function closeExportModal() {
+    setShowExportModal(false)
+    setExportStep(1)
+    setExportSelection([])
+    setReportType('class')
+    setClassNameMode('all')
+    setExportStudentIds([])
+    setSearchQuery('')
+    setGeneratedPDFs([])
+    setEmailRecipients([])
+  }
+
+  async function generateExamPDFs(): Promise<GeneratedPDF[]> {
+    const { pdf } = await import('@react-pdf/renderer')
+    const { default: ExamReportPDF } = await import('../pdf/ExamReportPDF')
+    const topNVisible = classNameMode === 'top5' ? 5 : undefined
+    const results: GeneratedPDF[] = []
+
+    if (reportType === 'class') {
+      for (const id of exportSelection) {
+        const examStat = examStats.find(s => s.exam.id === id)
+        if (!examStat) continue
+        const blob = await pdf(
+          <ExamReportPDF className={className} stats={examStat} classPassingPct={classPassingPct} subjects={subjects} topNVisible={topNVisible} />
+        ).toBlob()
+        const safeName = examStat.exam.name.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '')
+        results.push({ filename: pdfFileName(`${className}_${safeName}`, 'Exam-Report'), blob })
+      }
+    } else {
+      for (const studentId of exportStudentIds) {
+        const studentName = studentsInSelectedExams.find(s => s.id === studentId)?.name ?? studentId
+        const stuSafe = studentName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '')
+        for (const examId of exportSelection) {
+          const examStat = examStats.find(s => s.exam.id === examId)
+          if (!examStat) continue
+          const examSafe = examStat.exam.name.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '')
+          const blob = await pdf(
+            <ExamReportPDF className={className} stats={examStat} classPassingPct={classPassingPct} subjects={subjects} maskedStudentId={studentId} />
+          ).toBlob()
+          results.push({ filename: pdfFileName(`${stuSafe}_${examSafe}`, 'Exam-Report'), blob, studentId })
+        }
+      }
+    }
+    return results
+  }
+
+  async function downloadPDFs(pdfs: GeneratedPDF[]) {
+    if (pdfs.length === 0) return
+    if (pdfs.length === 1) {
+      downloadBlob(pdfs[0].blob, pdfs[0].filename)
+    } else {
+      const JSZip = (await import('jszip')).default
+      const zip = new JSZip()
+      const folderName = reportType === 'class'
+        ? `${className.replace(/\s+/g, '_')}_Exam_Reports`
+        : `${className.replace(/\s+/g, '_')}_Individual_Exam_Reports`
+      const folder = zip.folder(folderName)
+      for (const p of pdfs) folder?.file(p.filename, p.blob)
+      downloadBlob(await zip.generateAsync({ type: 'blob' }), `${folderName}.zip`)
+    }
+  }
+
+  async function goToEmailStep() {
+    setIsExporting(true)
+    try {
+      const pdfs = await generateExamPDFs()
+      setGeneratedPDFs(pdfs)
+      // Build recipients
+      const recipientSource = reportType === 'individual'
+        ? studentsInSelectedExams.filter(s => exportStudentIds.includes(s.id))
+        : studentsInSelectedExams
+      setEmailRecipients(recipientSource.map(s => ({ id: s.id, name: s.name, email: s.email, enabled: true })))
+      setExportStep('email')
+    } catch (e) {
+      console.error('PDF generation failed:', e)
     } finally {
       setIsExporting(false)
-      setShowExportModal(false)
+    }
+  }
+
+  async function handleDownloadOnly() {
+    await downloadPDFs(generatedPDFs)
+    closeExportModal()
+  }
+
+  async function handleSendAndDownload(subject: string, body: string, signature: string, extraFiles: File[]) {
+    setIsSending(true)
+    try {
+      await downloadPDFs(generatedPDFs)
+
+      const toBase64 = (blob: Blob): Promise<string> => new Promise((res, rej) => {
+        const reader = new FileReader()
+        reader.onload = () => res((reader.result as string).split(',')[1])
+        reader.onerror = rej
+        reader.readAsDataURL(blob)
+      })
+
+      const enabledRecipients = emailRecipients.filter(r => r.enabled && r.email)
+      const recipientData = await Promise.all(
+        enabledRecipients.map(async r => {
+          const pdfs = reportType === 'individual'
+            ? generatedPDFs.filter(p => p.studentId === r.id)
+            : generatedPDFs
+          return {
+            name: r.name,
+            email: r.email!,
+            pdfs: await Promise.all(pdfs.map(async p => ({ filename: p.filename, base64: await toBase64(p.blob) }))),
+          }
+        })
+      )
+
+      const extraAttachData = await Promise.all(
+        extraFiles.map(async f => {
+          const base64 = await toBase64(f)
+          return { filename: f.name, base64 }
+        })
+      )
+
+      await sendReportEmails(recipientData, subject, body, signature, extraAttachData)
+      closeExportModal()
+    } catch (e) {
+      console.error('Send failed:', e)
+    } finally {
+      setIsSending(false)
     }
   }
 
   const effectivePassing = stats ? (stats.exam.passing_pct_override ?? classPassingPct) : classPassingPct
 
-  // Compute percentile rank per student within this exam
   const sortedByPct = useMemo(() => {
     if (!stats) return []
     return [...stats.scores].sort((a, b) => b.percentage - a.percentage)
@@ -124,7 +234,7 @@ export default function PerExamTab({ className, examStats, classPassingPct }: Pr
     const total = stats.scores.length
     return new Map(stats.scores.map(s => {
       const countLowerOrEqual = stats.scores.filter(x => x.percentage <= s.percentage).length
-      return [s.id, Math.round((countLowerOrEqual / total) * 100)]
+      return [s.id, Math.min(99, Math.round((countLowerOrEqual / total) * 100))]
     }))
   }, [stats])
 
@@ -132,95 +242,233 @@ export default function PerExamTab({ className, examStats, classPassingPct }: Pr
     ? Math.round((stats.passCount / stats.scores.length) * 100)
     : 0
 
+  const examSubjects = useMemo(() => {
+    if (!stats?.exam.subject_ids?.length) return [] as { id: string; name: string }[]
+    const hasSubjectScores = stats.scores.some(s => s.subject_scores?.length)
+    return stats.exam.subject_ids.map(id => ({
+      id,
+      name: subjects?.find(s => s.id === id)?.name ?? id,
+    })).filter(subj => {
+      if (hasSubjectScores) return stats.scores.some(s => s.subject_scores?.some(x => x.subject_id === subj.id))
+      return true
+    })
+  }, [stats, subjects])
+
+  const subjectPercentileByStudent = useMemo(() => {
+    if (!stats || !examSubjects.length) return new Map<string, Map<string, number>>()
+    const result = new Map<string, Map<string, number>>()
+    for (const subj of examSubjects) {
+      const entries = stats.scores
+        .map(sc => {
+          if (sc.subject_scores?.length) {
+            const ss = sc.subject_scores.find(x => x.subject_id === subj.id)
+            if (!ss) return null
+            return { id: sc.student_id, pct: ss.total_items > 0 ? (ss.raw_score / ss.total_items) * 100 : 0 }
+          }
+          if (examSubjects.length === 1) return { id: sc.student_id, pct: sc.percentage }
+          return null
+        })
+        .filter(Boolean) as { id: string; pct: number }[]
+      const n = entries.length
+      for (const e of entries) {
+        const countLE = entries.filter(x => x.pct <= e.pct).length
+        if (!result.has(e.id)) result.set(e.id, new Map())
+        result.get(e.id)!.set(subj.id, Math.min(99, Math.round((countLE / n) * 100)))
+      }
+    }
+    return result
+  }, [stats, examSubjects])
+
+  // Step counts for indicator
+  const isIndividual = reportType === 'individual'
+  const totalSteps = isIndividual ? 4 : 3
+  const stepNum = exportStep === 'email' ? totalSteps : (exportStep as number)
+
   return (
     <div className="space-y-4">
-      {/* EXPORT MODAL UI */}
+      {/* EXPORT MODAL */}
       {showExportModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-          <div 
-            className="w-full max-w-md rounded-2xl p-5 shadow-2xl flex flex-col max-h-[80vh]" 
-            style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+          <div
+            className="w-full rounded-2xl p-5 shadow-2xl flex flex-col max-h-[90vh]"
+            style={{
+              maxWidth: exportStep === 'email' ? 520 : 448,
+              backgroundColor: 'var(--color-surface)',
+              border: '1px solid var(--color-border)',
+            }}
           >
-            <h2 className="text-lg font-bold mb-4" style={{ color: 'var(--color-text-primary)' }}>Export Exam Reports</h2>
-
-            {/* Search Bar */}
-            <div className="mb-4">
-              <input
-                type="text"
-                placeholder="Search exams..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full px-3 py-2 text-sm rounded-xl focus:ring-2 focus:ring-[#0BB5C7] transition-all"
-                style={{ 
-                  backgroundColor: 'var(--color-bg)', 
-                  color: 'var(--color-text-primary)', 
-                  border: '1px solid var(--color-border)', 
-                  outline: 'none' 
-                }}
-              />
-            </div>
-
-            <div className="flex gap-2 mb-4">
-              <button 
-                onClick={() => {
-                  const newSelection = new Set(exportSelection)
-                  filteredExams.forEach(s => newSelection.add(s.exam.id))
-                  setExportSelection(Array.from(newSelection))
-                }} 
-                className="text-xs font-medium px-3 py-1.5 rounded-lg bg-[#0BB5C7]/10 text-[#0BB5C7] hover:bg-[#0BB5C7]/20 transition-colors"
-              >
-                Select All
-              </button>
-              <button 
-                onClick={() => setExportSelection([])} 
-                className="text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
-                style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-muted)', border: '1px solid var(--color-border)' }}
-              >
-                Clear All
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto mb-4 space-y-1.5 pr-2">
-              {filteredExams.length > 0 ? (
-                filteredExams.map(s => (
-                  <label key={s.exam.id} className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-white/5 cursor-pointer transition-colors">
-                    <input
-                      type="checkbox"
-                      checked={exportSelection.includes(s.exam.id)}
-                      onChange={(e) => {
-                        if (e.target.checked) setExportSelection(prev => [...prev, s.exam.id])
-                        else setExportSelection(prev => prev.filter(id => id !== s.exam.id))
-                      }}
-                      className="w-4 h-4 rounded border-gray-400 accent-[#0BB5C7] cursor-pointer"
-                    />
-                    <span className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
-                      {s.exam.name}
-                    </span>
-                  </label>
-                ))
+            {/* Header */}
+            <div className="flex items-center gap-2 mb-4 shrink-0">
+              {exportStep === 'email' ? (
+                <>
+                  <Mail size={15} style={{ color: '#0BB5C7' }} />
+                  <h2 className="text-sm font-bold" style={{ color: 'var(--color-text-primary)' }}>Send via Email</h2>
+                </>
               ) : (
-                <p className="text-sm text-center py-4" style={{ color: 'var(--color-text-muted)' }}>
-                  No exams match your search.
-                </p>
+                <>
+                  {[1, 2, ...(isIndividual ? [3] : [])].map((n, i, arr) => (
+                    <div key={n} className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
+                        style={{
+                          backgroundColor: stepNum >= n ? '#0BB5C7' : 'var(--color-bg)',
+                          color: stepNum >= n ? '#fff' : 'var(--color-text-muted)',
+                          border: stepNum < n ? '1px solid var(--color-border)' : 'none',
+                        }}>
+                        {n}
+                      </div>
+                      {i < arr.length - 1 && <div className="h-px w-6" style={{ backgroundColor: stepNum > n ? '#0BB5C7' : 'var(--color-border)' }} />}
+                    </div>
+                  ))}
+                  <h2 className="ml-2 text-sm font-bold" style={{ color: 'var(--color-text-primary)' }}>
+                    {exportStep === 1 ? 'Select Exam(s)' : exportStep === 2 ? 'Report Type' : 'Select Students'}
+                  </h2>
+                </>
               )}
             </div>
 
-            <div className="flex justify-end gap-3 mt-auto pt-4" style={{ borderTop: '1px solid var(--color-border)' }}>
-              <button 
-                onClick={() => setShowExportModal(false)} 
-                className="px-4 py-2 text-sm font-medium rounded-xl hover:bg-white/5 transition-colors" 
-                style={{ color: 'var(--color-text-muted)' }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleMultiExport}
-                disabled={exportSelection.length === 0 || isExporting}
-                className="px-4 py-2 text-sm font-medium rounded-xl bg-[#0BB5C7] text-white hover:bg-[#099aa8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-              >
-                {isExporting ? 'Exporting...' : `Export Selected (${exportSelection.length})`}
-              </button>
-            </div>
+            {/* Step 1: Select exams */}
+            {exportStep === 1 && (
+              <>
+                <input type="text" placeholder="Search exams..." value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  className="w-full px-3 py-2 text-sm rounded-xl mb-3 shrink-0"
+                  style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)', outline: 'none' }} />
+                <div className="flex gap-2 mb-3 shrink-0">
+                  <button onClick={() => { const s = new Set(exportSelection); filteredExams.forEach(e => s.add(e.exam.id)); setExportSelection(Array.from(s)) }}
+                    className="text-xs font-medium px-3 py-1.5 rounded-lg bg-[#0BB5C7]/10 text-[#0BB5C7]">Select All</button>
+                  <button onClick={() => setExportSelection([])}
+                    className="text-xs font-medium px-3 py-1.5 rounded-lg"
+                    style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-muted)', border: '1px solid var(--color-border)' }}>Clear All</button>
+                </div>
+                <div className="flex-1 overflow-y-auto mb-4 space-y-1.5 pr-2">
+                  {filteredExams.length > 0 ? filteredExams.map(s => (
+                    <label key={s.exam.id} className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-white/5 cursor-pointer">
+                      <input type="checkbox" checked={exportSelection.includes(s.exam.id)}
+                        onChange={e => e.target.checked ? setExportSelection(p => [...p, s.exam.id]) : setExportSelection(p => p.filter(id => id !== s.exam.id))}
+                        className="w-4 h-4 accent-[#0BB5C7] cursor-pointer" />
+                      <span className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>{s.exam.name}</span>
+                    </label>
+                  )) : <p className="text-sm text-center py-4" style={{ color: 'var(--color-text-muted)' }}>No exams match.</p>}
+                </div>
+                <div className="flex justify-end gap-3 pt-4 shrink-0" style={{ borderTop: '1px solid var(--color-border)' }}>
+                  <button onClick={closeExportModal} className="px-4 py-2 text-sm font-medium rounded-xl" style={{ color: 'var(--color-text-muted)' }}>Cancel</button>
+                  <button onClick={() => { setExportStep(2); setSearchQuery('') }} disabled={exportSelection.length === 0}
+                    className="px-4 py-2 text-sm font-medium rounded-xl bg-[#0BB5C7] text-white disabled:opacity-50">
+                    Next →
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* Step 2: Report type */}
+            {exportStep === 2 && (
+              <>
+                <p className="text-xs mb-4 shrink-0" style={{ color: 'var(--color-text-muted)' }}>
+                  {exportSelection.length} exam{exportSelection.length !== 1 ? 's' : ''} selected
+                </p>
+                <div className="space-y-3 flex-1 overflow-y-auto">
+                  {(['class', 'individual'] as const).map(type => (
+                    <div key={type}>
+                      <label className="flex items-start gap-3 p-4 rounded-xl cursor-pointer"
+                        style={{ border: `2px solid ${reportType === type ? '#0BB5C7' : 'var(--color-border)'}`, backgroundColor: reportType === type ? 'rgba(11,181,199,0.05)' : 'var(--color-bg)' }}>
+                        <input type="radio" checked={reportType === type} onChange={() => setReportType(type)} className="mt-0.5 accent-[#0BB5C7]" />
+                        <div>
+                          <div className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                            {type === 'class' ? 'Class Report' : 'Individual Report'}
+                          </div>
+                          <div className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
+                            {type === 'class'
+                              ? 'One PDF per exam with student scores.'
+                              : 'One PDF per student — other students\' names are hidden.'}
+                          </div>
+                        </div>
+                      </label>
+                      {type === 'class' && reportType === 'class' && (
+                        <div className="ml-4 mt-2 space-y-1.5">
+                          {([['all', 'All student names visible'], ['top5', 'Top 5 names visible, rest hidden']] as const).map(([mode, label]) => (
+                            <label key={mode} className="flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer"
+                              style={{ backgroundColor: classNameMode === mode ? 'rgba(11,181,199,0.08)' : 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
+                              <input type="radio" checked={classNameMode === mode} onChange={() => setClassNameMode(mode)} className="accent-[#0BB5C7]" />
+                              <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>{label}</span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div className="flex justify-between gap-3 pt-4 mt-4 shrink-0" style={{ borderTop: '1px solid var(--color-border)' }}>
+                  <button onClick={() => { setExportStep(1); setSearchQuery('') }} className="px-4 py-2 text-sm font-medium rounded-xl" style={{ color: 'var(--color-text-muted)' }}>← Back</button>
+                  <div className="flex gap-3">
+                    <button onClick={closeExportModal} className="px-4 py-2 text-sm font-medium rounded-xl" style={{ color: 'var(--color-text-muted)' }}>Cancel</button>
+                    <button
+                      onClick={() => {
+                        if (reportType === 'class') goToEmailStep()
+                        else { setExportStep(3); setSearchQuery('') }
+                      }}
+                      disabled={isExporting}
+                      className="px-4 py-2 text-sm font-medium rounded-xl bg-[#0BB5C7] text-white disabled:opacity-50"
+                    >
+                      {isExporting ? 'Preparing...' : 'Next →'}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Step 3: Select students (individual mode) */}
+            {exportStep === 3 && (
+              <>
+                <p className="text-xs mb-3 shrink-0" style={{ color: 'var(--color-text-muted)' }}>Select students to generate individual reports for:</p>
+                <input type="text" placeholder="Search students..." value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  className="w-full px-3 py-2 text-sm rounded-xl mb-3 shrink-0"
+                  style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)', outline: 'none' }} />
+                <div className="flex gap-2 mb-3 shrink-0">
+                  <button onClick={() => setExportStudentIds(studentsInSelectedExams.map(s => s.id))}
+                    className="text-xs font-medium px-3 py-1.5 rounded-lg bg-[#0BB5C7]/10 text-[#0BB5C7]">Select All</button>
+                  <button onClick={() => setExportStudentIds([])}
+                    className="text-xs font-medium px-3 py-1.5 rounded-lg"
+                    style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-muted)', border: '1px solid var(--color-border)' }}>Clear All</button>
+                </div>
+                <div className="flex-1 overflow-y-auto mb-4 space-y-1.5 pr-2">
+                  {filteredStudents.length > 0 ? filteredStudents.map(s => (
+                    <label key={s.id} className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-white/5 cursor-pointer">
+                      <input type="checkbox" checked={exportStudentIds.includes(s.id)}
+                        onChange={e => e.target.checked ? setExportStudentIds(p => [...p, s.id]) : setExportStudentIds(p => p.filter(id => id !== s.id))}
+                        className="w-4 h-4 accent-[#0BB5C7] cursor-pointer" />
+                      <span className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>{s.name}</span>
+                    </label>
+                  )) : <p className="text-sm text-center py-4" style={{ color: 'var(--color-text-muted)' }}>No students found.</p>}
+                </div>
+                <div className="flex justify-between gap-3 pt-4 shrink-0" style={{ borderTop: '1px solid var(--color-border)' }}>
+                  <button onClick={() => { setExportStep(2); setSearchQuery('') }} className="px-4 py-2 text-sm font-medium rounded-xl" style={{ color: 'var(--color-text-muted)' }}>← Back</button>
+                  <div className="flex gap-3">
+                    <button onClick={closeExportModal} className="px-4 py-2 text-sm font-medium rounded-xl" style={{ color: 'var(--color-text-muted)' }}>Cancel</button>
+                    <button
+                      onClick={goToEmailStep}
+                      disabled={exportStudentIds.length === 0 || isExporting}
+                      className="px-4 py-2 text-sm font-medium rounded-xl bg-[#0BB5C7] text-white disabled:opacity-50"
+                    >
+                      {isExporting ? 'Preparing...' : `Next → (${exportStudentIds.length})`}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Email step */}
+            {exportStep === 'email' && (
+              <EmailComposeStep
+                recipients={emailRecipients}
+                onRecipientsChange={setEmailRecipients}
+                pdfSummary={`${generatedPDFs.length} PDF${generatedPDFs.length !== 1 ? 's' : ''} auto-attached`}
+                onSend={handleSendAndDownload}
+                onDownloadOnly={handleDownloadOnly}
+                onBack={() => setExportStep(reportType === 'class' ? 2 : 3)}
+                isSending={isSending}
+              />
+            )}
           </div>
         </div>
       )}
@@ -236,13 +484,7 @@ export default function PerExamTab({ className, examStats, classPassingPct }: Pr
           </select>
         </div>
         {stats && (
-          <ExportButton 
-            onExport={async () => {
-              setExportSelection([selectedId])
-              setShowExportModal(true)
-            }} 
-            label="Export Exam Reports" 
-          />
+          <ExportButton onExport={async () => openExportModal(selectedId)} label="Export Exam Reports" />
         )}
       </div>
 
@@ -316,21 +558,29 @@ export default function PerExamTab({ className, examStats, classPassingPct }: Pr
             </div>
           )}
 
-          {/* Score table with percentile column */}
+          {/* Score table */}
           {sortedByPct.length > 0 && (
             <div>
               <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--color-text-secondary)' }}>Student Scores &amp; Percentile Ranks</h3>
               <CopyableTable
-                headers={['#', 'Student', 'Score', '%', 'Percentile', 'Result']}
+                headers={['#', 'Student', 'Score', '%', 'Overall Pct.', ...examSubjects.map(s => `${s.name} Pct.`), 'Result']}
                 rows={sortedByPct.map((s, i) => {
                   const passes = s.percentage >= effectivePassing
-                  const pct = percentileMap.get(s.id) ?? 0
+                  const overallPct = percentileMap.get(s.id) ?? 0
+                  const stuSubjMap = subjectPercentileByStudent.get(s.student_id)
                   return [
                     { display: <span style={{ color: 'var(--color-text-muted)' }}>{i + 1}</span>, copy: String(i + 1) },
                     { display: <span style={{ color: 'var(--color-text-primary)', fontWeight: 500 }}>{s.students?.name ?? '—'}</span>, copy: s.students?.name ?? '—' },
                     { display: <span style={{ color: 'var(--color-text-secondary)', fontFamily: 'monospace', fontSize: 12 }}>{s.raw_score} / {s.total_items}</span>, copy: `${s.raw_score} / ${s.total_items}` },
                     { display: <span style={{ color: 'var(--color-text-primary)', fontFamily: 'monospace', fontSize: 12, fontWeight: 600 }}>{s.percentage.toFixed(1)}%</span>, copy: s.percentage.toFixed(1) + '%' },
-                    { display: <span style={{ color: 'var(--color-text-muted)' }}>{ordinal(pct)}</span>, copy: ordinal(pct) },
+                    { display: <span style={{ color: 'var(--color-text-muted)' }}>{ordinal(overallPct)}</span>, copy: ordinal(overallPct) },
+                    ...examSubjects.map(subj => {
+                      const pct = stuSubjMap?.get(subj.id)
+                      return {
+                        display: pct !== undefined ? <span style={{ color: 'var(--color-text-muted)' }}>{ordinal(pct)}</span> : <span style={{ color: 'var(--color-text-muted)' }}>—</span>,
+                        copy: pct !== undefined ? ordinal(pct) : '—',
+                      }
+                    }),
                     {
                       display: <span className="text-xs px-1.5 py-0.5 rounded font-medium"
                         style={passes ? { backgroundColor: 'rgba(34,197,94,0.12)', color: 'var(--color-success)' } : { backgroundColor: 'rgba(239,68,68,0.12)', color: 'var(--color-danger)' }}>

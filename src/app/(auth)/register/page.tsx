@@ -1,16 +1,24 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Image from 'next/image'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
+import { ensureUserProfile } from '@/app/actions'
 
 export default function RegisterPage() {
   const router = useRouter()
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const e = params.get('email')
+    if (e) setEmail(e)
+  }, [])
+
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -35,13 +43,10 @@ export default function RegisterPage() {
     try {
       const supabase = createClient()
 
-      const { error: signUpError } = await supabase.auth.signUp({
+      const { data, error: signUpError } = await supabase.auth.signUp({
         email,
         password,
-        options: {
-          // name flows into the DB trigger via raw_user_meta_data
-          data: { name },
-        },
+        options: { data: { name } },
       })
 
       if (signUpError) {
@@ -49,8 +54,21 @@ export default function RegisterPage() {
         return
       }
 
-      // The DB trigger (on_auth_user_created) auto-inserts the users row.
-      router.push('/pending')
+      if (!data.user) {
+        setError('Registration failed. Please try again.')
+        return
+      }
+
+      // Reliably create the users row and auto-approve invited teachers
+      const { status } = await ensureUserProfile(data.user.id, name, email)
+
+      if (status === 'active') {
+        // Invited teacher — skip pending, go straight to dashboard
+        router.push('/dashboard')
+      } else {
+        router.push('/pending')
+      }
+      router.refresh()
     } finally {
       setLoading(false)
     }

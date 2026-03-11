@@ -40,9 +40,16 @@ interface Props {
   className: string
   stats: SubjectReportStats
   classPassingPct: number
+  maskedStudentId?: string
+  topNVisible?: number
 }
 
-export default function SubjectReportPDF({ className, stats, classPassingPct }: Props) {
+function anonymLabel(i: number) {
+  if (i < 26) return String.fromCharCode(65 + i)
+  return String.fromCharCode(64 + Math.floor(i / 26)) + String.fromCharCode(65 + (i % 26))
+}
+
+export default function SubjectReportPDF({ className, stats, classPassingPct, maskedStudentId, topNVisible }: Props) {
   const genDate = new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })
 
   return (
@@ -106,10 +113,15 @@ export default function SubjectReportPDF({ className, stats, classPassingPct }: 
             </View>
             {stats.students.map((st, i) => {
               const passes = st.avg >= classPassingPct
+              const displayName = maskedStudentId
+                ? (st.id === maskedStudentId ? st.name : `Student ${anonymLabel(i)}`)
+                : topNVisible !== undefined && i >= topNVisible
+                  ? `Student ${anonymLabel(i)}`
+                  : st.name
               return (
                 <View key={st.id} style={i % 2 === 1 ? s.tableRowAlt : s.tableRow}>
                   <Text style={[s.td, { flex: 0.5, color: C.muted }]}>{i + 1}</Text>
-                  <Text style={[s.td, { flex: 2.5, fontFamily: 'Helvetica-Bold', color: C.dark }]}>{st.name}</Text>
+                  <Text style={[s.td, { flex: 2.5, fontFamily: 'Helvetica-Bold', color: C.dark }]}>{displayName}</Text>
                   <Text style={[s.td, { flex: 1 }]}>{st.examsTaken} / {stats.examBreakdown.length}</Text>
                   <Text style={[s.td, { flex: 1, fontFamily: 'Helvetica-Bold' }]}>{st.avg.toFixed(1)}%</Text>
                   <Text style={[s.td, { flex: 1, color: passes ? C.success : C.danger }]}>{passes ? 'Passing' : 'Failing'}</Text>

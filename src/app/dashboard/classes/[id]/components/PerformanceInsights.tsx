@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { Loader2, Mail } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 import type { ExamRow, ScoreRow, StudentRow, ScoreBracket, SubjectRow } from '@/types'
 import { DEFAULT_BRACKETS } from '@/types'
@@ -10,8 +10,6 @@ import PerStudentTab from './insights/PerStudentTab'
 import PerExamTab from './insights/PerExamTab'
 import PerSchoolTab from './insights/PerSchoolTab'
 import PerSubjectTab from './insights/PerSubjectTab'
-import CustomExportTab from './insights/CustomExportTab'
-import EmailReportsModal from './EmailReportsModal'
 
 // ── Shared math helpers ──────────────────────────────────────────────────────
 export function calcMean(arr: number[]): number {
@@ -90,7 +88,6 @@ const TABS = [
   { id: 'exam' as const, label: 'Per Exam' },
   { id: 'subject' as const, label: 'Per Subject' },
   { id: 'school' as const, label: 'Per School' },
-  { id: 'export' as const, label: 'Custom PDF Export' },
 ]
 
 
@@ -99,8 +96,7 @@ export default function PerformanceInsights({ className, classId, exams, subject
   const effectiveAtRisk = atRiskThreshold ?? classPassingPct
   const [allScores, setAllScores] = useState<ScoreRow[]>([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<'overall' | 'student' | 'exam' | 'subject' | 'school' | 'export'>('overall')
-  const [showEmailModal, setShowEmailModal] = useState(false)
+  const [activeTab, setActiveTab] = useState<'overall' | 'student' | 'exam' | 'subject' | 'school'>('overall')
 
   useEffect(() => {
     if (exams.length === 0) { setLoading(false); return }
@@ -152,7 +148,7 @@ export default function PerformanceInsights({ className, classId, exams, subject
     return withAvg.map(({ student, enriched, avgPct }) => {
       const studentsWithLowerOrEqual = withAvg.filter(x => x.avgPct <= avgPct).length
       const percentile = withAvg.length > 0
-        ? Math.round((studentsWithLowerOrEqual / withAvg.length) * 100) : 0
+        ? Math.min(99, Math.round((studentsWithLowerOrEqual / withAvg.length) * 100)) : 0
 
       let trend: 'improving' | 'steady' | 'declining' = 'steady'
       if (enriched.length >= 2) {
@@ -265,28 +261,7 @@ export default function PerformanceInsights({ className, classId, exams, subject
             </button>
           ))}
         </div>
-        {classId && studentStats.length > 0 && (
-          <button
-            onClick={() => setShowEmailModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg flex-shrink-0"
-            style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
-            title="Email student reports"
-          >
-            <Mail size={13} />
-            Email Reports
-          </button>
-        )}
       </div>
-
-      {showEmailModal && classId && (
-        <EmailReportsModal
-          classId={classId}
-          className={className}
-          studentStats={studentStats}
-          classPassingPct={classPassingPct}
-          onClose={() => setShowEmailModal(false)}
-        />
-      )}
 
       {activeTab === 'overall' && (
         <OverallTab
@@ -298,6 +273,7 @@ export default function PerformanceInsights({ className, classId, exams, subject
           totalStudents={classStudents.length}
           totalExams={exams.length}
           examStats={examStats}
+          subjects={subjects}
         />
       )}
       {activeTab === 'student' && (
@@ -307,6 +283,7 @@ export default function PerformanceInsights({ className, classId, exams, subject
           totalExams={exams.length}
           totalStudents={classStudents.length}
           classPassingPct={classPassingPct}
+          subjects={subjects}
         />
       )}
       {activeTab === 'exam' && (
@@ -314,6 +291,7 @@ export default function PerformanceInsights({ className, classId, exams, subject
           className={className}
           examStats={examStats}
           classPassingPct={classPassingPct}
+          subjects={subjects}
         />
       )}
       {activeTab === 'subject' && (
@@ -327,17 +305,6 @@ export default function PerformanceInsights({ className, classId, exams, subject
       )}
       {activeTab === 'school' && (
         <PerSchoolTab className={className} schoolStats={schoolStats} sortedExams={sortedExams} />
-      )}
-      {activeTab === 'export' && (
-        <CustomExportTab
-          className={className}
-          classPassingPct={classPassingPct}
-          classOverTime={classOverTime}
-          studentStats={studentStats}
-          examStats={examStats}
-          schoolStats={schoolStats}
-          sortedExams={sortedExams}
-        />
       )}
     </div>
   )

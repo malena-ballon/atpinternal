@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Loader2, AlertCircle, AlertTriangle, CheckCircle2, Plus } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 import Modal from '@/app/dashboard/components/Modal'
@@ -40,12 +40,15 @@ interface PreviewRow {
   isUnknown: boolean
 }
 
+interface Sel { r1: number; r2: number; c1: number; c2: number }
+
 interface Props {
   exam: ExamRow
   classId: string
   classStudents: StudentRow[]
   classPassingPct: number
   subjects: SubjectRow[]
+  initialRows?: GridRow[]
   onClose: () => void
   onBack?: () => void
   onImported: (scores: ScoreRow[], detectedTotalItems: number) => void
@@ -64,7 +67,7 @@ const cellInputStyle: React.CSSProperties = {
   fontFamily: 'inherit',
 }
 
-export default function BulkScoreModal({ exam, classId, classStudents, classPassingPct, subjects, onClose, onBack, onImported }: Props) {
+export default function BulkScoreModal({ exam, classId, classStudents, classPassingPct, subjects, initialRows, onClose, onBack, onImported }: Props) {
   const examSubjects: SubjectRow[] = (() => {
     const ids = exam.subject_ids?.length ? exam.subject_ids : exam.subject_id ? [exam.subject_id] : []
     return ids.map(id => subjects.find(s => s.id === id)).filter(Boolean) as SubjectRow[]
@@ -79,14 +82,94 @@ export default function BulkScoreModal({ exam, classId, classStudents, classPass
     scores: Array(scoreColCount).fill(''),
   })
 
-  const [gridRows, setGridRows] = useState<GridRow[]>(() =>
-    Array.from({ length: INITIAL_ROWS }, makeEmptyRow)
-  )
+  const [gridRows, setGridRows] = useState<GridRow[]>(() => {
+    if (initialRows && initialRows.length > 0) {
+      const padded = [...initialRows]
+      while (padded.length < INITIAL_ROWS) padded.push(makeEmptyRow())
+      return padded
+    }
+    return Array.from({ length: INITIAL_ROWS }, makeEmptyRow)
+  })
+
   const [preview, setPreview] = useState<PreviewRow[] | null>(null)
   const [unknownActions, setUnknownActions] = useState<Record<number, 'skip' | 'add'>>({})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [totalWarning, setTotalWarning] = useState('')
+  const [sel, setSel] = useState<Sel | null>(null)
+  const anchorRef = useRef<{ r: number; c: number } | null>(null)
+
+  useEffect(() => {
+    if (preview) return
+    function getCellValue(row: GridRow, c: number): string {
+      if (c === 0) return row.name
+      if (c === 1) return row.email
+      return row.scores[c - 2] ?? ''
+    }
+    function handle(e: KeyboardEvent) {
+      if (!(e.metaKey || e.ctrlKey) || !sel) return
+      const [r1, r2] = [Math.min(sel.r1, sel.r2), Math.max(sel.r1, sel.r2)]
+      const [c1, c2] = [Math.min(sel.c1, sel.c2), Math.max(sel.c1, sel.c2)]
+      if (e.key === 'c') {
+        const el = document.activeElement
+        if ((el instanceof HTMLInputElement) && el.selectionStart !== el.selectionEnd) return
+        e.preventDefault()
+        const text = gridRows.slice(r1, r2 + 1)
+          .map(row => Array.from({ length: c2 - c1 + 1 }, (_, i) => getCellValue(row, c1 + i)).join('\t'))
+          .join('\n')
+        navigator.clipboard.writeText(text)
+      }
+      if (e.key === 'v') {
+        e.preventDefault()
+        navigator.clipboard.readText().then(text => {
+          if (!text) return
+          const lines = text.trim().split('\n').filter(Boolean)
+          setGridRows(prev => {
+            const next = [...prev]
+            for (let ri = 0; ri < lines.length; ri++) {
+              const rowIdx = r1 + ri
+              if (rowIdx >= next.length) next.push(makeEmptyRow())
+              const cols = lines[ri].split('\t')
+              const row = { ...next[rowIdx], scores: [...next[rowIdx].scores] }
+              for (let ci = 0; ci < cols.length; ci++) {
+                const col = c1 + ci
+                const val = cols[ci].trim()
+                if (col === 0) row.name = val
+                else if (col === 1) row.email = val
+                else if (col - 2 < scoreColCount) row.scores[col - 2] = val
+              }
+              next[rowIdx] = row
+            }
+            return next
+          })
+        })
+      }
+    }
+    document.addEventListener('keydown', handle)
+    return () => document.removeEventListener('keydown', handle)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel, gridRows, preview])
+
+  function cellMouseDown(r: number, c: number, e: React.MouseEvent) {
+    if (e.shiftKey && anchorRef.current) {
+      setSel({ r1: anchorRef.current.r, r2: r, c1: anchorRef.current.c, c2: c })
+    } else {
+      anchorRef.current = { r, c }
+      setSel({ r1: r, r2: r, c1: c, c2: c })
+    }
+  }
+
+  function inSel(r: number, c: number) {
+    if (!sel) return false
+    return r >= Math.min(sel.r1, sel.r2) && r <= Math.max(sel.r1, sel.r2)
+      && c >= Math.min(sel.c1, sel.c2) && c <= Math.max(sel.c1, sel.c2)
+  }
+
+  function cs(r: number, c: number): React.CSSProperties {
+    return inSel(r, c)
+      ? { backgroundColor: 'rgba(11,181,199,0.1)', boxShadow: 'inset 0 0 0 1px rgba(11,181,199,0.45)' }
+      : {}
+  }
 
   const effectivePct = exam.passing_pct_override ?? classPassingPct
   const studentNameMap = new Map(classStudents.map(s => [s.name.toLowerCase(), s]))
@@ -105,26 +188,28 @@ export default function BulkScoreModal({ exam, classId, classStudents, classPass
     })
   }
 
-  function handleCellPaste(rowStart: number, e: React.ClipboardEvent<HTMLInputElement>) {
+  function handleCellPaste(rowStart: number, colStart: number, e: React.ClipboardEvent<HTMLInputElement>) {
     const text = e.clipboardData.getData('text')
     if (!text.includes('\n') && !text.includes('\t')) return
     e.preventDefault()
-    applyPastedText(text, rowStart)
+    applyPastedText(text, rowStart, colStart)
   }
 
-  function applyPastedText(text: string, rowStart = 0) {
+  function applyPastedText(text: string, rowStart = 0, colStart = 0) {
     const lines = text.split('\n').map(r => r.replace(/\r$/, ''))
     const tableData = lines
       .map(r => r.split('\t').map(c => c.trim()))
       .filter(r => r.some(c => c))
     if (tableData.length === 0) return
 
-    // Auto-skip header row
+    // Auto-skip header row only when pasting from col 0
     let startIdx = 0
-    const firstRow = tableData[0]
-    if (!firstRow.some(c => c.includes('/')) && tableData.length > 1 &&
-        firstRow.some(c => /^(name|student|email|score)/i.test(c))) {
-      startIdx = 1
+    if (colStart === 0) {
+      const firstRow = tableData[0]
+      if (!firstRow.some(c => c.includes('/')) && tableData.length > 1 &&
+          firstRow.some(c => /^(name|student|email|score)/i.test(c))) {
+        startIdx = 1
+      }
     }
     const dataRows = tableData.slice(startIdx)
 
@@ -134,14 +219,14 @@ export default function BulkScoreModal({ exam, classId, classStudents, classPass
         const idx = rowStart + offset
         if (idx >= next.length) next.push(makeEmptyRow())
         const scores = [...next[idx].scores]
-        for (let ci = 0; ci < scoreColCount; ci++) {
-          if (cols[2 + ci] !== undefined) scores[ci] = cols[2 + ci]
+        for (let ci = 0; ci < cols.length; ci++) {
+          const col = colStart + ci
+          const val = cols[ci]
+          if (col === 0) next[idx] = { ...next[idx], scores, name: val }
+          else if (col === 1) next[idx] = { ...next[idx], scores, email: val }
+          else if (col - 2 < scoreColCount) scores[col - 2] = val
         }
-        next[idx] = {
-          name: cols[0] !== undefined ? cols[0] : next[idx].name,
-          email: cols[1] !== undefined ? cols[1] : next[idx].email,
-          scores,
-        }
+        next[idx] = { ...next[idx], scores }
       })
       while (next.length < INITIAL_ROWS) next.push(makeEmptyRow())
       return next
@@ -245,7 +330,7 @@ export default function BulkScoreModal({ exam, classId, classStudents, classPass
           },
           { onConflict: 'exam_id,student_id' }
         )
-        .select('id, exam_id, student_id, raw_score, total_items, percentage, created_at')
+        .select('id, exam_id, student_id, raw_score, total_items, percentage, created_at, subject_scores')
         .single()
 
       if (err || !score) { setError(`Failed to save score: ${err?.message}`); setLoading(false); return }
@@ -264,7 +349,7 @@ export default function BulkScoreModal({ exam, classId, classStudents, classPass
   const filledCount = gridRows.filter(r => r.name.trim()).length
 
   return (
-    <Modal title={`Import Scores — ${exam.name}`} onClose={onClose} width="xl">
+    <Modal title={`Import Scores — ${exam.name}`} onClose={onClose} width="2xl">
       {!preview ? (
         <div className="space-y-4">
           {/* Subject tags */}
@@ -284,6 +369,9 @@ export default function BulkScoreModal({ exam, classId, classStudents, classPass
             Type directly or paste a range from Google Sheets / Excel (Name → Email → Scores, tab-separated).
             Score format: <code className="px-1 py-0.5 rounded text-xs" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>25 / 50</code>
           </p>
+          <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+            Click a cell to select · Shift+click to select range · Ctrl/Cmd+C to copy · Ctrl/Cmd+V to paste
+          </p>
 
           {error && (
             <div className="flex items-start gap-2 p-3 rounded-lg text-sm"
@@ -293,8 +381,8 @@ export default function BulkScoreModal({ exam, classId, classStudents, classPass
           )}
 
           {/* Spreadsheet grid */}
-          <div className="rounded-xl overflow-auto" style={{ border: '1px solid var(--color-border)', maxHeight: 420 }}>
-            <table className="w-full text-sm border-collapse" style={{ minWidth: `${120 + 180 + scoreColCount * 130}px` }}>
+          <div className="rounded-xl" style={{ border: '1px solid var(--color-border)', maxHeight: 420, overflowX: 'auto', overflowY: 'auto' }}>
+            <table className="text-sm border-collapse" style={{ width: '100%', minWidth: `${36 + 140 + 200 + scoreColCount * 130}px` }}>
               <thead>
                 <tr style={{ backgroundColor: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)', position: 'sticky', top: 0, zIndex: 1 }}>
                   <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider"
@@ -332,31 +420,34 @@ export default function BulkScoreModal({ exam, classId, classStudents, classPass
                       style={{ color: 'var(--color-text-muted)', borderRight: '1px solid var(--color-border)' }}>
                       {i + 1}
                     </td>
-                    <td style={{ borderRight: '1px solid var(--color-border)', padding: 0 }}>
+                    <td style={{ borderRight: '1px solid var(--color-border)', padding: 0, ...cs(i, 0) }}
+                      onMouseDown={e => cellMouseDown(i, 0, e)}>
                       <input
                         style={cellInputStyle}
                         value={row.name}
                         onChange={e => updateCell(i, 'name', e.target.value)}
-                        onPaste={e => handleCellPaste(i, e)}
+                        onPaste={e => handleCellPaste(i, 0, e)}
                         placeholder={i < 2 ? 'Juan Dela Cruz' : ''}
                       />
                     </td>
-                    <td style={{ borderRight: '1px solid var(--color-border)', padding: 0 }}>
+                    <td style={{ borderRight: '1px solid var(--color-border)', padding: 0, ...cs(i, 1) }}
+                      onMouseDown={e => cellMouseDown(i, 1, e)}>
                       <input
                         style={cellInputStyle}
                         value={row.email}
                         onChange={e => updateCell(i, 'email', e.target.value)}
-                        onPaste={e => handleCellPaste(i, e)}
+                        onPaste={e => handleCellPaste(i, 1, e)}
                         placeholder={i < 2 ? 'juan@email.com' : ''}
                       />
                     </td>
                     {Array.from({ length: scoreColCount }, (_, ci) => (
-                      <td key={ci} style={{ borderRight: ci < scoreColCount - 1 ? '1px solid var(--color-border)' : 'none', padding: 0 }}>
+                      <td key={ci} style={{ borderRight: ci < scoreColCount - 1 ? '1px solid var(--color-border)' : 'none', padding: 0, ...cs(i, 2 + ci) }}
+                        onMouseDown={e => cellMouseDown(i, 2 + ci, e)}>
                         <input
                           style={cellInputStyle}
                           value={row.scores[ci] ?? ''}
                           onChange={e => updateScore(i, ci, e.target.value)}
-                          onPaste={e => handleCellPaste(i, e)}
+                          onPaste={e => handleCellPaste(i, 2 + ci, e)}
                           placeholder={i < 2 ? '25 / 50' : ''}
                         />
                       </td>

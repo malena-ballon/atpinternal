@@ -223,6 +223,9 @@ export default function ExamsManager({ classId, classPassingPct, exams, subjects
                     <ExamScoresTable
                       exam={exam}
                       classPassingPct={classPassingPct}
+                      classId={classId}
+                      classStudents={classStudents}
+                      subjects={subjects}
                       externalScores={scores ?? null}
                     />
                   </div>

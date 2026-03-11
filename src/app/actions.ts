@@ -35,6 +35,126 @@ export async function rejectUser(userId: string): Promise<{ ok: boolean; error?:
   return { ok: true }
 }
 
+// ── Registration ───────────────────────────────────────────────────────────────
+// Called after supabase.auth.signUp() on the client. Uses service client to
+// reliably create the users row (in case the DB trigger hasn't been applied).
+// If the registering email matches an invited teacher, auto-approves them.
+export async function ensureUserProfile(
+  userId: string,
+  name: string,
+  email: string
+): Promise<{ status: 'active' | 'pending' }> {
+  const supabase = createServiceClient()
+
+  // Check if this email belongs to an invited (unlinked) teacher
+  const { data: teacher } = await supabase
+    .from('teachers')
+    .select('id')
+    .eq('email', email)
+    .is('user_id', null)
+    .maybeSingle()
+
+  const status: 'active' | 'pending' = teacher ? 'active' : 'pending'
+
+  // Upsert the users row — handles both trigger-already-ran and trigger-missing cases
+  await supabase.from('users').upsert(
+    { id: userId, name, email, role: 'teacher', status },
+    { onConflict: 'id' }
+  )
+
+  // Link the teacher record if this was an invited user
+  if (teacher) {
+    await supabase.from('teachers').update({ user_id: userId }).eq('id', teacher.id)
+  }
+
+  return { status }
+}
+
+// ── Invite teacher ─────────────────────────────────────────────────────────────
+export async function sendTeacherInvite(teacherId: string): Promise<{ ok: boolean; error?: string }> {
+  const supabase = createServiceClient()
+  const { data: teacher } = await supabase
+    .from('teachers')
+    .select('name, email')
+    .eq('id', teacherId)
+    .single()
+
+  if (!teacher) return { ok: false, error: 'Teacher not found' }
+
+  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000'
+  const registerUrl = `${baseUrl}/register?email=${encodeURIComponent(teacher.email)}`
+
+  const { error } = await resend.emails.send({
+    from: FROM_EMAIL,
+    to: teacher.email,
+    subject: "You're invited to join ATP Internal",
+    html: `
+      <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;">
+        <h2 style="color:#0A1045;margin:0 0 8px;">You've been invited!</h2>
+        <p style="color:#334155;margin:0 0 16px;">Hi ${teacher.name},</p>
+        <p style="color:#334155;margin:0 0 16px;">You've been added as a teacher on the Acadgenius Tutorial Powerhouse internal platform. Click the button below to create your account — no approval needed.</p>
+        <a href="${registerUrl}" style="display:inline-block;background:#0BB5C7;color:#0A1045;padding:12px 28px;border-radius:8px;font-weight:700;text-decoration:none;margin:4px 0 24px;">
+          Create My Account
+        </a>
+        <p style="color:#94a3b8;font-size:12px;margin:0;">Or copy this link:<br>${registerUrl}</p>
+      </div>
+    `.trim(),
+  })
+
+  if (error) return { ok: false, error: error.message }
+  return { ok: true }
+}
+
+// ── Activity logging ───────────────────────────────────────────────────────────
+export async function logActivity(
+  action: string,
+  entityType: string,
+  entityId: string | null,
+  entityName: string | null,
+  description: string
+): Promise<void> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return
+  const { data: profile } = await supabase.from('users').select('name').eq('id', user.id).single()
+  const svc = createServiceClient()
+  await svc.from('activity_logs').insert({
+    user_id: user.id,
+    user_name: profile?.name ?? 'Unknown',
+    action,
+    entity_type: entityType,
+    entity_id: entityId,
+    entity_name: entityName,
+    description,
+  })
+}
+
+// ── Teacher profile save (service client — bypasses RLS for teacher self-edits) ─
+export async function saveTeacher(
+  payload: { name: string; email: string; specialization: string | null; availability: unknown },
+  teacherId?: string
+): Promise<{ data: { id: string; user_id: string | null; name: string; specialization: string | null; email: string; availability: unknown } | null; error?: string }> {
+  const supabase = createServiceClient()
+  if (teacherId) {
+    const { data, error } = await supabase
+      .from('teachers')
+      .update(payload)
+      .eq('id', teacherId)
+      .select('id, user_id, name, specialization, email, availability')
+      .single()
+    if (error) return { data: null, error: error.message }
+    return { data }
+  } else {
+    const { data, error } = await supabase
+      .from('teachers')
+      .insert(payload)
+      .select('id, user_id, name, specialization, email, availability')
+      .single()
+    if (error) return { data: null, error: error.message }
+    return { data }
+  }
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function fmtTime(t: string) {
   const [h, m] = t.split(':')
@@ -207,6 +327,65 @@ export async function emailSessionSchedule(
     console.error('[emailSessionSchedule] failed', e)
     return { ok: false, skipped: false, error: String(e) }
   }
+}
+
+// ── Send report emails (with PDF attachments) ─────────────────────────────────
+export async function sendReportEmails(
+  recipients: {
+    name: string
+    email: string
+    pdfs: { filename: string; base64: string }[]
+  }[],
+  subject: string,
+  body: string,
+  signature: string,
+  extraAttachments: { filename: string; base64: string }[]
+): Promise<{ sent: number; failed: number }> {
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  let sent = 0
+  let failed = 0
+
+  for (const r of recipients) {
+    try {
+      const html = `
+<div style="font-family:system-ui,sans-serif;padding:24px;max-width:540px;margin:0 auto;">
+  <div style="background:#0BB5C7;padding:16px 20px;border-radius:8px 8px 0 0;">
+    <span style="color:#fff;font-size:16px;font-weight:700;">Report</span>
+  </div>
+  <div style="padding:20px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;">
+    <p style="margin:0 0 12px;color:#374151;">Hi <strong>${esc(r.name)}</strong>,</p>
+    <p style="margin:0 0 16px;color:#374151;white-space:pre-wrap;">${esc(body)}</p>
+    ${signature ? `<hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;"/><p style="margin:0;font-size:12px;color:#6b7280;white-space:pre-wrap;">${esc(signature)}</p>` : ''}
+    <p style="margin:16px 0 0;font-size:11px;color:#9ca3af;">Sent by Acadgenius Tutorial Powerhouse.</p>
+  </div>
+</div>`
+      const pdfAttachments = r.pdfs.map(p => ({
+        filename: p.filename,
+        content: Buffer.from(p.base64, 'base64'),
+      }))
+      const extraAttach = extraAttachments.map(a => ({
+        filename: a.filename,
+        content: Buffer.from(a.base64, 'base64'),
+      }))
+      const { error } = await resend.emails.send({
+        from: FROM_EMAIL,
+        to: r.email,
+        subject,
+        html,
+        attachments: [...pdfAttachments, ...extraAttach],
+      })
+      if (error) {
+        console.error('[sendReportEmails] failed for', r.email, error)
+        failed++
+      } else {
+        sent++
+      }
+    } catch (e) {
+      console.error('[sendReportEmails] exception for', r.email, e)
+      failed++
+    }
+  }
+  return { sent, failed }
 }
 
 // ── Send student PDF report ────────────────────────────────────────────────────

@@ -127,8 +127,6 @@ export default function StudentsManager({ classId, initialStudents }: Props) {
       }
 
       if (e.key === 'v') {
-        const selSize = (r2 - r1 + 1) * (c2 - c1 + 1)
-        if (selSize <= 1) return
         e.preventDefault()
         navigator.clipboard.readText().then(text => {
           if (!text) return
@@ -136,6 +134,7 @@ export default function StudentsManager({ classId, initialStudents }: Props) {
           setRows(prev => {
             const next = [...prev]
             if (pastedRows.length === 1 && !pastedRows[0].includes('\t')) {
+              // Single value: fill entire selection
               const raw = pastedRows[0].trim()
               for (let r = r1; r <= r2; r++) {
                 if (!next[r]) continue
@@ -144,12 +143,17 @@ export default function StudentsManager({ classId, initialStudents }: Props) {
                 next[r] = row
               }
             } else {
-              for (let ri = 0; ri < pastedRows.length && r1 + ri <= r2; ri++) {
+              // Multi-cell: use top-left of selection as anchor, no upper-bound clip
+              for (let ri = 0; ri < pastedRows.length; ri++) {
+                const rowIdx = r1 + ri
+                while (next.length <= rowIdx) next.push(blankRow())
                 const cols = pastedRows[ri].split('\t')
-                const row = { ...next[r1 + ri], _dirty: true }
-                for (let ci = 0; ci < cols.length && c1 + ci <= c2; ci++)
+                const row = { ...next[rowIdx], _dirty: true }
+                for (let ci = 0; ci < cols.length; ci++) {
+                  if (c1 + ci >= PASTE_COLS.length) break
                   applyCellValue(row, c1 + ci, cols[ci].trim())
-                next[r1 + ri] = row
+                }
+                next[rowIdx] = row
               }
             }
             return next

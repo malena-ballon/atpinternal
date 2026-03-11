@@ -54,7 +54,7 @@ export default function Modal({ title, onClose, children, width = 'md' }: Props)
           </button>
         </div>
         {/* Body */}
-        <div className="p-6 overflow-y-auto">{children}</div>
+        <div className="p-6 overflow-auto">{children}</div>
       </div>
     </div>
   )

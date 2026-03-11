@@ -2,9 +2,9 @@
 
 import { useState } from 'react'
 import { Loader2, Plus, Minus } from 'lucide-react'
-import { createClient } from '@/utils/supabase/client'
 import Modal from '@/app/dashboard/components/Modal'
 import type { TeacherRow, AvailabilityEntry } from '@/types'
+import { saveTeacher, logActivity } from '@/app/actions'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
@@ -93,7 +93,6 @@ export default function TeacherFormModal({ teacher, onClose, onSaved }: Props) {
     }
     setError('')
     setLoading(true)
-    const supabase = createClient()
 
     const payload = {
       name: name.trim(),
@@ -102,14 +101,22 @@ export default function TeacherFormModal({ teacher, onClose, onSaved }: Props) {
       availability: availability.length > 0 ? availability : null,
     }
 
-    const { data, error: err } = isEdit
-      ? await supabase.from('teachers').update(payload).eq('id', teacher!.id)
-          .select('id, user_id, name, specialization, email, availability').single()
-      : await supabase.from('teachers').insert(payload)
-          .select('id, user_id, name, specialization, email, availability').single()
+    const { data, error: err } = await saveTeacher(payload, teacher?.id)
+
+    if (err) { setLoading(false); setError(err); return }
+
+    // Log the activity
+    await logActivity(
+      isEdit ? 'updated_profile' : 'added_teacher',
+      'teacher',
+      data!.id,
+      payload.name,
+      isEdit
+        ? `Updated teacher profile: ${payload.name}`
+        : `Added new teacher: ${payload.name}`
+    )
 
     setLoading(false)
-    if (err) { setError(err.message); return }
     onSaved(data as TeacherRow)
   }
 

@@ -20,6 +20,14 @@ export default async function TeachersPage() {
   const serviceClient = createServiceClient()
   const todayStr = new Date().toISOString().split('T')[0]
 
+  const { data: { user } } = await supabase.auth.getUser()
+  const [{ data: currentUser }, { data: currentTeacherRow }] = await Promise.all([
+    supabase.from('users').select('role').eq('id', user!.id).single(),
+    supabase.from('teachers').select('id').eq('user_id', user!.id).maybeSingle(),
+  ])
+  const currentUserRole = (currentUser?.role ?? 'teacher') as 'admin' | 'teacher'
+  const currentTeacherId = currentTeacherRow?.id ?? null
+
   const [{ data: teachers }, { data: sessions }, { data: pendingUsers }] = await Promise.all([
     supabase
       .from('teachers')
@@ -67,6 +75,8 @@ export default async function TeachersPage() {
         activeTeachers={activeTeachers}
         pendingUsers={pending}
         invitedTeachers={invitedTeachers}
+        currentUserRole={currentUserRole}
+        currentTeacherId={currentTeacherId}
       />
     </div>
   )
