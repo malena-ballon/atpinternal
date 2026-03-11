@@ -4,7 +4,7 @@ export default function MalenaPage() {
   return (
     <div>
       <h1 className="text-2xl font-bold mb-6" style={{ color: 'var(--color-text-primary)' }}>
-        Happy Birthday
+        Mark's 24th
       </h1>
       
       <div
