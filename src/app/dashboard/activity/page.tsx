@@ -81,7 +81,7 @@ export default async function ActivityPage() {
           <table className="w-full">
             <thead>
               <tr style={{ backgroundColor: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)' }}>
-                {['Teacher / User', 'Action', 'Target', 'Details', 'Date', 'Time'].map(h => (
+                {['User', 'Action', 'Target', 'Details', 'Date', 'Time'].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider"
                     style={{ color: 'var(--color-text-muted)' }}>{h}</th>
                 ))}
