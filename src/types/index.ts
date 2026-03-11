@@ -112,9 +112,9 @@ export interface ClassSummary {
   id: string
   name: string
   status: ClassStatus
-  rate: number | null
   zoom_link: string | null
   subjectsCount: number
   sessionsCount: number
+  studentsCount: number
   completionPct: number
 }

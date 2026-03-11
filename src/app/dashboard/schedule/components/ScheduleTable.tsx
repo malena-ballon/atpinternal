@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { format, parseISO, isToday, isBefore, startOfDay, parse, isValid } from 'date-fns'
-import { Pencil, Trash2, Loader2, Check, CalendarDays, Plus } from 'lucide-react'
+import { Pencil, Trash2, Loader2, Check, CalendarDays, Plus, AlertTriangle, Download } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
+import { logActivity } from '@/app/actions'
 import type { SessionRow, SessionStatus, ClassRow, TeacherRow, SubjectRow } from '@/types'
 import StatusBadge from '@/app/dashboard/components/StatusBadge'
 
@@ -40,14 +41,6 @@ const STATUS_COLORS: Record<SessionStatus, { backgroundColor: string; color: str
   cancelled:   { backgroundColor: 'rgba(220,38,38,0.12)',   color: '#DC2626' },
   rescheduled: { backgroundColor: 'rgba(99,102,241,0.12)',  color: '#4F46E5' },
 }
-
-const BULK_STATUSES: { value: SessionStatus; label: string }[] = [
-  { value: 'scheduled',   label: 'Upcoming' },
-  { value: 'in_progress', label: 'In Progress' },
-  { value: 'completed',   label: 'Done' },
-  { value: 'cancelled',   label: 'Cancelled' },
-  { value: 'rescheduled', label: 'Rescheduled' },
-]
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -105,15 +98,6 @@ function parseTime(raw: string): string {
     return `${h.toString().padStart(2, '0')}:${m}`
   }
   return ''
-}
-
-function downloadCSV(filename: string, rows: string[][]) {
-  const csv = rows.map(r => r.map(v => `"${(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n')
-  const blob = new Blob([csv], { type: 'text/csv' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url; a.download = filename; a.click()
-  URL.revokeObjectURL(url)
 }
 
 // ─── DraftRow ─────────────────────────────────────────────────────────────────
@@ -175,7 +159,7 @@ interface Props {
   selected: Set<string>
   onSelectToggle: (id: string) => void
   onSelectAll: () => void
-  onBulkStatusChange: (ids: string[], status: SessionStatus) => void
+  onBulkDelete: (ids: string[]) => void
   onSessionsChanged: (saved: SessionRow[]) => void
   classes: ClassRow[]
   teachers: TeacherRow[]
@@ -186,7 +170,7 @@ interface Props {
 
 export default function ScheduleTable({
   sessions, selected, onSelectToggle, onSelectAll,
-  onBulkStatusChange, onSessionsChanged,
+  onBulkDelete, onSessionsChanged,
   classes, teachers, subjectsByClass,
 }: Props) {
   const [editMode, setEditMode] = useState(false)
@@ -195,6 +179,7 @@ export default function ScheduleTable({
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
   const [saved, setSaved] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const savedSnapshot = useRef<DraftRow[]>([])
   const [sel, setSel] = useState<Sel | null>(null)
   const anchorRef = useRef<{ r: number; c: number } | null>(null)
@@ -212,24 +197,105 @@ export default function ScheduleTable({
     return ''
   }
 
+  function applyCellValueInEdit(row: DraftRow, c: number, raw: string): Partial<DraftRow> {
+    const v = raw.trim()
+    if (c === 0) { const d = parseDate(v); return d ? { date: d } : {} }
+    if (c === 1) return {} // day is auto-computed
+    if (c === 2) { const t = parseTime(v); return t ? { start_time: t } : {} }
+    if (c === 3) { const t = parseTime(v); return t ? { end_time: t } : {} }
+    if (c === 4) {
+      if (!row._isNew) return {}
+      const match = classes.find(cl => cl.name.toLowerCase() === v.toLowerCase())
+      return match ? { class_id: match.id, subject_id: '' } : {}
+    }
+    if (c === 5) {
+      const match = teachers.find(t => t.name.toLowerCase() === v.toLowerCase())
+      return match ? { teacher_id: match.id } : {}
+    }
+    if (c === 6) {
+      const subs = subjectsByClass.get(row.class_id) ?? []
+      const match = subs.find(s => s.name.toLowerCase() === v.toLowerCase())
+      return match ? { subject_id: match.id } : {}
+    }
+    if (c === 7) return { topic: v }
+    if (c === 8) {
+      const match = STATUS_OPTIONS.find(o => o.label.toLowerCase() === v.toLowerCase() || o.value === v.toLowerCase())
+      return match ? { status: match.value, _statusLocked: true } : {}
+    }
+    return {}
+  }
+
   useEffect(() => {
     function handle(e: KeyboardEvent) {
-      if (!(e.metaKey || e.ctrlKey) || e.key !== 'c' || !sel) return
+      if (!(e.metaKey || e.ctrlKey) || !sel) return
       const el = document.activeElement
-      if ((el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) && el.selectionStart !== el.selectionEnd) return
-      e.preventDefault()
+      const inInput = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+      const hasTextSel = inInput && (el as HTMLInputElement).selectionStart !== (el as HTMLInputElement).selectionEnd
+
       const [r1, r2] = [Math.min(sel.r1, sel.r2), Math.max(sel.r1, sel.r2)]
       const [c1, c2] = [Math.min(sel.c1, sel.c2), Math.max(sel.c1, sel.c2)]
-      if (editMode) {
-        const text = rows.slice(r1, r2 + 1)
-          .map(row => Array.from({ length: c2 - c1 + 1 }, (_, i) => getEditRowCell(row, c1 + i)).join('\t'))
-          .join('\n')
-        navigator.clipboard.writeText(text)
-      } else {
-        const text = sessions.slice(r1, r2 + 1)
-          .map(s => Array.from({ length: c2 - c1 + 1 }, (_, i) => getCell(s, c1 + i)).join('\t'))
-          .join('\n')
-        navigator.clipboard.writeText(text)
+
+      if (e.key === 'c') {
+        if (hasTextSel) return
+        e.preventDefault()
+        if (editMode) {
+          const text = rows.slice(r1, r2 + 1)
+            .map(row => Array.from({ length: c2 - c1 + 1 }, (_, i) => getEditRowCell(row, c1 + i)).join('\t'))
+            .join('\n')
+          navigator.clipboard.writeText(text)
+        } else {
+          const text = sessions.slice(r1, r2 + 1)
+            .map(s => Array.from({ length: c2 - c1 + 1 }, (_, i) => getCell(s, c1 + i)).join('\t'))
+            .join('\n')
+          navigator.clipboard.writeText(text)
+        }
+      }
+
+      if (e.key === 'v' && editMode) {
+        if (hasTextSel) return
+        e.preventDefault()
+        navigator.clipboard.readText().then(text => {
+          if (!text.trim()) return
+          const pastedMatrix = text.trim().split('\n').map(r => r.split('\t'))
+          setRows(prev => {
+            const next = [...prev]
+            const isSingleValue = pastedMatrix.length === 1 && pastedMatrix[0].length === 1
+            if (isSingleValue) {
+              // Fill entire selection with the single value
+              const raw = pastedMatrix[0][0]
+              for (let ri = r1; ri <= r2; ri++) {
+                if (ri >= next.length) break
+                for (let ci = c1; ci <= c2; ci++) {
+                  const row = { ...next[ri] }
+                  const updates = applyCellValueInEdit(row, ci, raw)
+                  if (!Object.keys(updates).length) continue
+                  Object.assign(row, updates, { _dirty: true })
+                  if (!row._statusLocked && (updates.date !== undefined || updates.start_time !== undefined || updates.end_time !== undefined))
+                    row.status = autoStatus(row.date, row.start_time, row.end_time)
+                  next[ri] = row
+                }
+              }
+            } else {
+              // Multi-cell: paste from top-left of selection
+              for (let pr = 0; pr < pastedMatrix.length; pr++) {
+                const ri = r1 + pr
+                if (ri >= next.length) break
+                for (let pc = 0; pc < pastedMatrix[pr].length; pc++) {
+                  const ci = c1 + pc
+                  if (ci > 8) break // 9 data columns (0–8)
+                  const row = { ...next[ri] }
+                  const updates = applyCellValueInEdit(row, ci, pastedMatrix[pr][pc])
+                  if (!Object.keys(updates).length) continue
+                  Object.assign(row, updates, { _dirty: true })
+                  if (!row._statusLocked && (updates.date !== undefined || updates.start_time !== undefined || updates.end_time !== undefined))
+                    row.status = autoStatus(row.date, row.start_time, row.end_time)
+                  next[ri] = row
+                }
+              }
+            }
+            return next
+          })
+        })
       }
     }
     document.addEventListener('keydown', handle)
@@ -349,6 +415,20 @@ export default function ScheduleTable({
       }
 
       setDeletedIds(new Set())
+
+      // Log what was saved
+      const parts: string[] = []
+      if (toInsert.length > 0) {
+        const dates = toInsert.map(r => r.date).filter(Boolean).sort()
+        const range = dates.length > 1 ? `${dates[0]} – ${dates[dates.length - 1]}` : dates[0] ?? ''
+        parts.push(`added ${toInsert.length} session${toInsert.length !== 1 ? 's' : ''}${range ? ` (${range})` : ''}`)
+      }
+      if (toUpdate.length > 0) parts.push(`updated ${toUpdate.length} session${toUpdate.length !== 1 ? 's' : ''}`)
+      if (deletedIds.size > 0) parts.push(`deleted ${deletedIds.size} session${deletedIds.size !== 1 ? 's' : ''}`)
+      if (parts.length > 0) {
+        await logActivity('saved_sessions', 'schedule', null, 'Master Schedule', `Master Schedule: ${parts.join(', ')}`)
+      }
+
       setSaved(true); setTimeout(() => setSaved(false), 2500)
       setEditMode(false)
     } catch (err: unknown) {
@@ -356,20 +436,40 @@ export default function ScheduleTable({
     } finally { setSaving(false) }
   }
 
-  function handleExportCSV() {
-    const header = ['Date', 'Day', 'Time', 'Subject', 'Topic', 'Class', 'Teacher', 'Status', 'Students']
-    const dataRows = sessions.map(s => [
-      s.date ? format(parseISO(s.date), 'MMM d, yyyy') : '',
-      s.date ? format(parseISO(s.date), 'EEE') : '',
-      s.start_time && s.end_time ? `${fmt12(s.start_time)} – ${fmt12(s.end_time)}` : '',
-      s.subjects?.name ?? '',
-      s.topic ?? '',
-      s.classes?.name ?? '',
-      s.teachers?.name ?? '',
-      STATUS_OPTIONS.find(o => o.value === s.status)?.label ?? s.status,
-      s.student_count > 0 ? String(s.student_count) : '',
-    ])
-    downloadCSV('master-schedule.csv', [header, ...dataRows])
+  const [exportingPDF, setExportingPDF] = useState(false)
+
+  async function handleExportPDF() {
+    setExportingPDF(true)
+    try {
+      const { pdf } = await import('@react-pdf/renderer')
+      const { default: MasterSchedulePDF } = await import('./MasterSchedulePDF')
+      const React = (await import('react')).default
+      const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+      const pdfRows = sessions.map((s, i) => ({
+        index: i + 1,
+        date: s.date ? format(parseISO(s.date), 'MMM d, yyyy') : '—',
+        day: s.date ? format(parseISO(s.date), 'EEE') : '—',
+        time: s.start_time && s.end_time ? `${fmt12(s.start_time)} – ${fmt12(s.end_time)}` : '—',
+        subject: s.subjects?.name ?? '',
+        topic: s.topic ?? '',
+        className: s.classes?.name ?? '',
+        teacher: s.teachers?.name ?? '',
+        status: s.status,
+        students: s.student_count > 0 ? String(s.student_count) : '',
+      }))
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const blob = await pdf(React.createElement(MasterSchedulePDF, { rows: pdfRows, generatedDate: today }) as any).toBlob()
+      const date = new Date().toISOString().split('T')[0]
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = `master-schedule_${date}.pdf`; a.click()
+      URL.revokeObjectURL(url)
+      await logActivity('exported_pdf', 'schedule', null, 'Master Schedule', `Exported Master Schedule PDF (${pdfRows.length} sessions)`)
+    } catch (e) {
+      console.error('PDF export failed:', e)
+    } finally {
+      setExportingPDF(false)
+    }
   }
 
   return (
@@ -379,10 +479,12 @@ export default function ScheduleTable({
         <div className="flex items-center gap-2 mb-3">
           <div className="ml-auto flex items-center gap-2">
             <button
-              onClick={handleExportCSV}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-xl font-medium"
+              onClick={handleExportPDF}
+              disabled={exportingPDF}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-xl font-medium disabled:opacity-60"
               style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}>
-              Export CSV
+              {exportingPDF ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+              {exportingPDF ? 'Generating…' : 'Export PDF'}
             </button>
             <button
               onClick={enterEditMode}
@@ -427,21 +529,13 @@ export default function ScheduleTable({
           <span className="font-medium" style={{ color: '#0BB5C7' }}>
             {selected.size} selected
           </span>
-          <span style={{ color: 'var(--color-border)' }}>|</span>
-          <span style={{ color: 'var(--color-text-secondary)' }}>Set status:</span>
-          <select
-            className="text-sm rounded-lg px-2 py-1 outline-none"
-            style={{ border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface)', color: 'var(--color-text-primary)' }}
-            onChange={e => {
-              if (e.target.value) {
-                onBulkStatusChange(Array.from(selected), e.target.value as SessionStatus)
-                e.target.value = ''
-              }
-            }}
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg"
+            style={{ backgroundColor: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.2)', color: 'var(--color-danger)' }}
           >
-            <option value="">Choose status...</option>
-            {BULK_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-          </select>
+            <Trash2 size={13} /> Delete selected
+          </button>
           <button
             className="ml-auto text-xs"
             style={{ color: 'var(--color-text-muted)' }}
@@ -449,6 +543,42 @@ export default function ScheduleTable({
           >
             {allSelected ? 'Deselect all' : 'Select all'}
           </button>
+        </div>
+      )}
+
+      {/* Delete confirmation dialog */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="rounded-2xl p-6 w-full max-w-sm space-y-4"
+            style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: 'rgba(220,38,38,0.1)' }}>
+                <AlertTriangle size={18} style={{ color: 'var(--color-danger)' }} />
+              </div>
+              <h3 className="text-base font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                Delete {selected.size} session{selected.size !== 1 ? 's' : ''}?
+              </h3>
+            </div>
+            <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+              This will permanently delete the selected session{selected.size !== 1 ? 's' : ''}. This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-3 pt-1">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="px-4 py-2 text-sm rounded-xl"
+                style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => { setShowDeleteConfirm(false); onBulkDelete(Array.from(selected)) }}
+                className="px-4 py-2 text-sm font-semibold rounded-xl text-white"
+                style={{ backgroundColor: 'var(--color-danger)' }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -461,7 +591,7 @@ export default function ScheduleTable({
       {/* Hint (view mode) */}
       {!editMode && sessions.length > 0 && (
         <p className="text-xs mb-3" style={{ color: 'var(--color-text-muted)' }}>
-          Click a cell to select · Shift+click to select range · Ctrl/Cmd+C to copy
+          Click a cell to select · Shift+click to select range · Ctrl/Cmd+C to copy · Ctrl/Cmd+V to paste
         </p>
       )}
 

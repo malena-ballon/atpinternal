@@ -1,10 +1,12 @@
+'use client'
+
 import { Heart } from 'lucide-react'
 
 export default function MalenaPage() {
   return (
     <div>
       <h1 className="text-2xl font-bold mb-6" style={{ color: 'var(--color-text-primary)' }}>
-        Mark's 24th
+        Mark's 24th Birthday
       </h1>
       
       <div

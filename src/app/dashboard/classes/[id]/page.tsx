@@ -23,7 +23,7 @@ export default async function ClassDetailPage({ params }: { params: Promise<{ id
       .eq('class_id', id)
       .order('enrolled_at', { ascending: false }),
     supabase.from('exams')
-      .select('id, class_id, subject_id, name, date, total_items, passing_pct_override, created_at, updated_at, subjects(name)')
+      .select('id, class_id, subject_id, subject_ids, name, date, total_items, passing_pct_override, created_at, updated_at, subjects(name)')
       .eq('class_id', id)
       .order('date', { ascending: false }),
   ])

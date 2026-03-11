@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Loader2, X } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
+import { logActivity } from '@/app/actions'
 import Modal from '@/app/dashboard/components/Modal'
 import ThresholdInput from '@/app/dashboard/components/ThresholdInput'
 import type { ExamRow, SubjectRow } from '@/types'
@@ -79,6 +80,17 @@ export default function ExamFormModal({ classId, classPassingPct, subjects, exam
       ...data,
       subjects: Array.isArray(data.subjects) ? data.subjects[0] : data.subjects,
     }
+    const subjectNames = subjects.filter(s => subjectIds.includes(s.id)).map(s => s.name).join(', ') || 'no subjects'
+    const dateStr = date || 'no date'
+    await logActivity(
+      isEdit ? 'updated_exam' : 'added_exam',
+      'exam',
+      data.id,
+      name.trim(),
+      isEdit
+        ? `Updated exam "${name.trim()}" — date: ${dateStr}, subjects: ${subjectNames}${pctValue != null ? `, passing override: ${pctValue}%` : ''}`
+        : `Added exam "${name.trim()}" — date: ${dateStr}, subjects: ${subjectNames}`
+    )
     onSaved(formattedData as unknown as ExamRow)
   }
 

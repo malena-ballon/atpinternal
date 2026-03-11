@@ -7,7 +7,7 @@ export default async function ClassesPage() {
 
   const { data: classesData } = await supabase
     .from('classes')
-    .select('id, name, status, zoom_link, subjects(id), sessions(id, status)')
+    .select('id, name, status, zoom_link, subjects(id), sessions(id, status), class_students(student_id)')
     .order('created_at', { ascending: false })
 
   const classes: ClassSummary[] = (classesData ?? []).map((c) => {
@@ -18,10 +18,10 @@ export default async function ClassesPage() {
       id: c.id,
       name: c.name,
       status: c.status,
-      rate: null,
       zoom_link: c.zoom_link ?? null,
       subjectsCount: (c.subjects as unknown[]).length,
       sessionsCount: total,
+      studentsCount: (c.class_students as unknown[]).length,
       completionPct: total > 0 ? Math.round((done / total) * 100) : 0,
     }
   })

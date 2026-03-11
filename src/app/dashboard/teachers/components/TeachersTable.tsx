@@ -7,7 +7,7 @@ import { createClient } from '@/utils/supabase/client'
 import type { TeacherRow } from '@/types'
 import type { TeacherWithStats, PendingUser } from '../page'
 import TeacherFormModal from './TeacherFormModal'
-import { approveUser, rejectUser, sendTeacherInvite } from '@/app/actions'
+import { approveUser, rejectUser, sendTeacherInvite, logActivity } from '@/app/actions'
 
 const DAY_ABBR: Record<string, string> = {
   Monday: 'Mon', Tuesday: 'Tue', Wednesday: 'Wed',
@@ -103,7 +103,9 @@ export default function TeachersTable({ activeTeachers, pendingUsers, invitedTea
 
   async function handleDelete(id: string) {
     setDeleting(true)
+    const teacherName = [...teachers, ...invited].find(t => t.id === id)?.name ?? id
     await createClient().from('teachers').delete().eq('id', id)
+    await logActivity('deleted_teacher', 'teacher', id, teacherName, `Deleted teacher: ${teacherName}`)
     if (tab === 'teachers') setTeachers(prev => prev.filter(t => t.id !== id))
     else setInvited(prev => prev.filter(t => t.id !== id))
     setDeleteConfirm(null)
@@ -113,9 +115,11 @@ export default function TeachersTable({ activeTeachers, pendingUsers, invitedTea
   async function handleApprove(userId: string) {
     setActionLoading(userId)
     setActionError('')
+    const pendingUser = pending.find(u => u.id === userId)
     const res = await approveUser(userId)
     setActionLoading(null)
     if (!res.ok) { setActionError(res.error ?? 'Failed to approve'); return }
+    await logActivity('added_teacher', 'teacher', userId, pendingUser?.name ?? userId, `Approved and activated teacher: ${pendingUser?.name ?? userId}`)
     setPending(prev => prev.filter(u => u.id !== userId))
     router.refresh()
   }
@@ -124,9 +128,11 @@ export default function TeachersTable({ activeTeachers, pendingUsers, invitedTea
     setActionLoading('invite-' + teacherId)
     setActionError('')
     setInviteSuccess(null)
+    const teacherName = invited.find(t => t.id === teacherId)?.name ?? teacherId
     const res = await sendTeacherInvite(teacherId)
     setActionLoading(null)
     if (!res.ok) { setActionError(res.error ?? 'Failed to send invite'); return }
+    await logActivity('sent_email', 'teacher', teacherId, teacherName, `Sent invitation email to teacher: ${teacherName}`)
     setInviteSuccess(teacherId)
     setTimeout(() => setInviteSuccess(null), 3000)
   }
@@ -134,9 +140,11 @@ export default function TeachersTable({ activeTeachers, pendingUsers, invitedTea
   async function handleReject(userId: string) {
     setActionLoading(userId + '-reject')
     setActionError('')
+    const pendingUser = pending.find(u => u.id === userId)
     const res = await rejectUser(userId)
     setActionLoading(null)
     if (!res.ok) { setActionError(res.error ?? 'Failed to reject'); return }
+    await logActivity('deleted_teacher', 'teacher', userId, pendingUser?.name ?? userId, `Rejected teacher application: ${pendingUser?.name ?? userId}`)
     setPending(prev => prev.filter(u => u.id !== userId))
   }
 

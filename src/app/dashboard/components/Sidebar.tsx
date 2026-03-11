@@ -11,6 +11,7 @@ import {
   BookMarked,
   LogOut,
   HeartIcon,
+  Activity,
 } from 'lucide-react'
 import { signOut } from '@/app/actions'
 
@@ -52,9 +53,10 @@ function NavItem({ href, icon: Icon, label, badge, exact }: NavItemProps) {
 interface Props {
   name: string
   role: string
+  pendingCount?: number
 }
 
-export default function Sidebar({ name, role }: Props) {
+export default function Sidebar({ name, role, pendingCount = 0 }: Props) {
   const initials = name
     .split(' ')
     .map(w => w[0])
@@ -79,10 +81,15 @@ export default function Sidebar({ name, role }: Props) {
       {/* Logo */}
       <div className="px-5 py-5" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
         <Link href="/dashboard" className="flex items-center gap-2.5">
-          <Image src="/logo.jpg" alt="Acadgenius" width={32} height={32} className="rounded-lg" />
-          <span className="text-base font-bold" style={{ color: '#FFFFFF' }}>
-            Acadgenius
-          </span>
+          <Image src="/logo.jpg" alt="Acadgenius Tutorial Powerhouse" width={32} height={32} className="rounded-lg" />
+          <div className="flex flex-col">
+            <span className="text-base font-bold leading-tight" style={{ color: '#FFFFFF' }}>
+              Acadgenius
+            </span>
+            <span className="text-xs font-medium leading-tight" style={{ color: 'rgba(255,255,255,0.55)' }}>
+              Tutorial Powerhouse
+            </span>
+          </div>
         </Link>
       </div>
 
@@ -111,9 +118,10 @@ export default function Sidebar({ name, role }: Props) {
         <NavItem href="/dashboard" icon={LayoutDashboard} label="Dashboard" exact />
         <NavItem href="/dashboard/schedule" icon={CalendarDays} label="Master Schedule" />
         <NavItem href="/dashboard/classes" icon={BookOpen} label="Classes" />
-        <NavItem href="/dashboard/teachers" icon={Users} label="Teachers" />
+        <NavItem href="/dashboard/teachers" icon={Users} label="Teachers" badge={pendingCount} />
         {role === 'admin' && (
           <>
+            <NavItem href="/dashboard/activity" icon={Activity} label="Activity Log" />
             <NavItem href="/dashboard/notebook" icon={BookMarked} label="Notebook" />
             <NavItem href="/dashboard/malena" icon={HeartIcon} label="Malena" />
           </>

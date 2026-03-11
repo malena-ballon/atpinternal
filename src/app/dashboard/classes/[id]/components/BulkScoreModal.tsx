@@ -5,6 +5,7 @@ import { Loader2, AlertCircle, AlertTriangle, CheckCircle2, Plus } from 'lucide-
 import { createClient } from '@/utils/supabase/client'
 import Modal from '@/app/dashboard/components/Modal'
 import type { ExamRow, StudentRow, ScoreRow, SubjectRow } from '@/types'
+import { logActivity } from '@/app/actions'
 
 // ─── Score parsing ─────────────────────────────────────────────────────────
 
@@ -338,6 +339,7 @@ export default function BulkScoreModal({ exam, classId, classStudents, classPass
     }
 
     await supabase.from('exams').update({ total_items: detectedTotal }).eq('id', exam.id)
+    await logActivity('added_score', 'exam', exam.id, exam.name, `Imported ${results.length} score${results.length !== 1 ? 's' : ''} for exam: ${exam.name}`)
     setLoading(false)
     onImported(results, detectedTotal)
   }

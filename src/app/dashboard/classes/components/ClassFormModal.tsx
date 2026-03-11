@@ -1,17 +1,18 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { Loader2, Plus, Trash2 } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
+import { logActivity } from '@/app/actions'
 import Modal from '@/app/dashboard/components/Modal'
 import ThresholdInput from '@/app/dashboard/components/ThresholdInput'
-import type { ClassRow, ClassStatus, ScoreBracket } from '@/types'
+import type { ClassRow, ClassStatus, ClassSummary, ScoreBracket } from '@/types'
 import { DEFAULT_BRACKETS } from '@/types'
 
 interface Props {
   class?: ClassRow
   onClose: () => void
+  onSaved?: (cls: ClassSummary) => void
 }
 
 const STATUSES: { value: ClassStatus; label: string }[] = [
@@ -42,9 +43,8 @@ const smallInputStyle: React.CSSProperties = {
   width: '100%',
 }
 
-export default function ClassFormModal({ class: cls, onClose }: Props) {
+export default function ClassFormModal({ class: cls, onClose, onSaved }: Props) {
   const isEdit = !!cls
-  const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [form, setForm] = useState({
@@ -92,12 +92,39 @@ export default function ClassFormModal({ class: cls, onClose }: Props) {
       score_brackets: JSON.stringify(brackets),
       status: form.status,
     }
-    const { error: err } = isEdit
-      ? await supabase.from('classes').update(payload).eq('id', cls!.id)
-      : await supabase.from('classes').insert(payload)
-    setLoading(false)
-    if (err) { setError(err.message); return }
-    router.refresh()
+    if (isEdit) {
+      const { error: err } = await supabase.from('classes').update(payload).eq('id', cls!.id)
+      setLoading(false)
+      if (err) { setError(err.message); return }
+      await logActivity('updated_class', 'class', cls!.id, payload.name, `Updated class "${payload.name}" — status: ${payload.status}, passing: ${payload.default_passing_pct}%${payload.at_risk_threshold != null ? `, at-risk: ${payload.at_risk_threshold}%` : ''}${payload.zoom_link ? ', zoom link set' : ''}`)
+      onSaved?.({
+        id: cls!.id,
+        name: payload.name,
+        status: payload.status,
+        zoom_link: payload.zoom_link ?? null,
+        subjectsCount: 0, // will be preserved by caller
+        sessionsCount: 0,
+        studentsCount: 0,
+        completionPct: 0,
+        _isEdit: true,
+      } as ClassSummary & { _isEdit: boolean })
+    } else {
+      const { data: inserted, error: err } = await supabase
+        .from('classes').insert(payload).select('id').single()
+      setLoading(false)
+      if (err) { setError(err.message); return }
+      await logActivity('added_class', 'class', inserted.id, payload.name, `Added new class "${payload.name}" — status: ${payload.status}, passing: ${payload.default_passing_pct}%${payload.zoom_link ? ', zoom link set' : ''}`)
+      onSaved?.({
+        id: inserted.id,
+        name: payload.name,
+        status: payload.status,
+        zoom_link: payload.zoom_link ?? null,
+        subjectsCount: 0,
+        sessionsCount: 0,
+        studentsCount: 0,
+        completionPct: 0,
+      })
+    }
     onClose()
   }
 

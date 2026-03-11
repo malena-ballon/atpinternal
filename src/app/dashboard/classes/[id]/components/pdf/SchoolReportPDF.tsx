@@ -1,4 +1,4 @@
-import { Document, Page, View, Text, StyleSheet } from '@react-pdf/renderer'
+import { Document, Page, View, Text, Image, StyleSheet } from '@react-pdf/renderer'
 import type { SchoolStats } from '../PerformanceInsights'
 import type { ExamRow } from '@/types'
 
@@ -45,7 +45,10 @@ export default function SchoolReportPDF({ className, schoolStats, sortedExams }:
     <Document>
       <Page size="A4" style={s.page}>
         {/* Header */}
-        <Text style={s.brand}>ACADGENIUS TUTORIAL POWERHOUSE</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+          <Image src={`${window.location.origin}/logo.jpg`} style={{ width: 30, height: 30, marginRight: 8, borderRadius: 4 }} />
+          <Text style={{ fontSize: 11, fontFamily: 'Helvetica-Bold', color: C.dark }}>Acadgenius Tutorial Powerhouse</Text>
+        </View>
         <Text style={s.title}>School Performance Report</Text>
         <Text style={s.subtitle}>{className}</Text>
         <Text style={s.genDate}>Generated: {genDate}</Text>

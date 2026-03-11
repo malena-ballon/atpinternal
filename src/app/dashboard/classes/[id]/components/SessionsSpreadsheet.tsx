@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { format, parseISO, isToday, isBefore, startOfDay, parse, isValid } from 'date-fns'
 import { Plus, Trash2, Loader2, Check, CalendarDays, AlertTriangle, Pencil, Mail, Search, ChevronDown, X } from 'lucide-react'
 import EmailComposeStep, { type EmailRecipient } from './insights/EmailComposeStep'
-import { sendReportEmails } from '@/app/actions'
+import { sendReportEmails, logActivity } from '@/app/actions'
 import { createClient } from '@/utils/supabase/client'
 import type { SessionRow, SessionStatus, SubjectRow, TeacherRow, StudentRow } from '@/types'
 import ExportButton, { downloadBlob, pdfFileName } from './pdf/ExportButton'
@@ -577,6 +577,16 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
       setDeletedIds(new Set())
       setSaved(true); setTimeout(() => setSaved(false), 2500)
       setEditMode(false)
+
+      const changes: string[] = []
+      if (deletedIds.size > 0) changes.push(`deleted ${deletedIds.size} session${deletedIds.size !== 1 ? 's' : ''}`)
+      if (toInsert.length > 0) {
+        const dates = toInsert.map(r => r.date).filter(Boolean).sort()
+        const range = dates.length > 1 ? `${dates[0]} – ${dates[dates.length - 1]}` : dates[0] ?? ''
+        changes.push(`added ${toInsert.length} session${toInsert.length !== 1 ? 's' : ''}${range ? ` (${range})` : ''}`)
+      }
+      if (toUpdate.length > 0) changes.push(`updated ${toUpdate.length} session${toUpdate.length !== 1 ? 's' : ''}`)
+      await logActivity('saved_sessions', 'class', classId, className, `In "${className}": ${changes.join(', ')}`)
     } catch (err: unknown) {
       setSaveError(err instanceof Error ? err.message : 'Save failed')
     } finally { setSaving(false) }

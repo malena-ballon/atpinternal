@@ -1,4 +1,4 @@
-import { Document, Page, View, Text, StyleSheet } from '@react-pdf/renderer'
+import { Document, Page, View, Text, Image, StyleSheet } from '@react-pdf/renderer'
 
 export interface SessionPDFRow {
   index: number
@@ -65,7 +65,10 @@ export default function SessionSchedulePDF({ className, sessions }: Props) {
     <Document>
       <Page size="A4" orientation="landscape" style={s.page}>
         {/* Header */}
-        <Text style={s.brand}>ACADGENIUS TUTORIAL POWERHOUSE</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+          <Image src={`${window.location.origin}/logo.jpg`} style={{ width: 30, height: 30, marginRight: 8, borderRadius: 4 }} />
+          <Text style={{ fontSize: 11, fontFamily: 'Helvetica-Bold', color: C.dark }}>Acadgenius Tutorial Powerhouse</Text>
+        </View>
         <Text style={s.title}>Session Schedule</Text>
         <Text style={s.subtitle}>{className}</Text>
         <Text style={s.genDate}>Generated {today} · {sessions.length} session{sessions.length !== 1 ? 's' : ''}</Text>

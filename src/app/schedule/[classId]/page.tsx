@@ -1,17 +1,13 @@
 import { notFound } from 'next/navigation'
 import { format, parseISO } from 'date-fns'
+import Image from 'next/image'
 import { createServiceClient } from '@/utils/supabase/service'
-import { GraduationCap, Clock } from 'lucide-react'
+import { Clock } from 'lucide-react'
 
 function fmt12(t: string) {
   const [h, m] = t.split(':')
   const hour = parseInt(h)
   return `${hour % 12 || 12}:${m} ${hour >= 12 ? 'PM' : 'AM'}`
-}
-
-const STATUS_LABEL: Record<string, { label: string; color: string; bg: string }> = {
-  scheduled:   { label: 'Upcoming',    color: '#0BB5C7', bg: 'rgba(61,212,230,0.1)' },
-  in_progress: { label: 'In Progress', color: '#D97706', bg: 'rgba(245,158,11,0.1)' },
 }
 
 export default async function PublicSchedulePage({ params }: { params: Promise<{ classId: string }> }) {
@@ -21,7 +17,7 @@ export default async function PublicSchedulePage({ params }: { params: Promise<{
   const [{ data: cls }, { data: sessions }] = await Promise.all([
     supabase.from('classes').select('id, name, status').eq('id', classId).single(),
     supabase.from('sessions')
-      .select('id, date, start_time, end_time, status, subjects(name)')
+      .select('id, date, start_time, end_time, status, topic, subjects(name)')
       .eq('class_id', classId)
       .in('status', ['scheduled', 'in_progress'])
       .order('date')
@@ -40,15 +36,16 @@ export default async function PublicSchedulePage({ params }: { params: Promise<{
         className="sticky top-0 z-10"
         style={{ backgroundColor: 'var(--color-surface)', borderBottom: '1px solid var(--color-border)' }}
       >
-        <div className="max-w-3xl mx-auto px-6 py-4 flex items-center gap-3">
-          <div
-            className="w-8 h-8 rounded-lg flex items-center justify-center"
-            style={{ backgroundColor: 'rgba(61,212,230,0.12)' }}
-          >
-            <GraduationCap size={18} style={{ color: '#0BB5C7' }} />
-          </div>
+        <div className="max-w-4xl mx-auto px-6 py-4 flex items-center gap-3">
+          <Image
+            src="/logo.jpg"
+            alt="Acadgenius Tutorial Powerhouse"
+            width={36}
+            height={36}
+            className="rounded-lg object-cover"
+          />
           <span className="text-base font-bold" style={{ color: 'var(--color-text-primary)' }}>
-            Acadgenius
+            Acadgenius Tutorial Powerhouse
           </span>
           <span style={{ color: 'var(--color-border)' }}>|</span>
           <span className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
@@ -58,7 +55,7 @@ export default async function PublicSchedulePage({ params }: { params: Promise<{
       </header>
 
       {/* Content */}
-      <main className="max-w-3xl mx-auto px-6 py-8 space-y-6">
+      <main className="max-w-4xl mx-auto px-6 py-8 space-y-6">
         <div>
           <h1 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
             {cls.name} — Schedule
@@ -85,7 +82,7 @@ export default async function PublicSchedulePage({ params }: { params: Promise<{
             <table className="w-full">
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg)' }}>
-                  {['Date', 'Day', 'Time', 'Subject', 'Status'].map(h => (
+                  {['Date', 'Day', 'Time', 'Subject', 'Topic'].map(h => (
                     <th
                       key={h}
                       className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider"
@@ -98,7 +95,6 @@ export default async function PublicSchedulePage({ params }: { params: Promise<{
               </thead>
               <tbody>
                 {sessions.map((s, i) => {
-                  const cfg = STATUS_LABEL[s.status] ?? STATUS_LABEL.scheduled
                   const subject = (s.subjects as unknown as { name: string } | null)
                   return (
                     <tr
@@ -120,13 +116,8 @@ export default async function PublicSchedulePage({ params }: { params: Promise<{
                       <td className="px-5 py-4 text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
                         {subject?.name ?? '—'}
                       </td>
-                      <td className="px-5 py-4">
-                        <span
-                          className="text-xs font-semibold px-2.5 py-1 rounded-full"
-                          style={{ backgroundColor: cfg.bg, color: cfg.color }}
-                        >
-                          {cfg.label}
-                        </span>
+                      <td className="px-5 py-4 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                        {(s as { topic?: string }).topic || '—'}
                       </td>
                     </tr>
                   )
@@ -138,7 +129,7 @@ export default async function PublicSchedulePage({ params }: { params: Promise<{
 
         {/* Footer */}
         <p className="text-xs text-center pb-4" style={{ color: 'var(--color-text-muted)' }}>
-          Powered by Acadgenius · Schedule is read-only and updates automatically
+          Acadgenius Tutorial Powerhouse · Schedule is read-only and updates automatically
         </p>
       </main>
     </div>

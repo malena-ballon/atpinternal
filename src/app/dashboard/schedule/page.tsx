@@ -206,10 +206,10 @@ function ScheduleContent() {
     setSelected(prev => prev.size === filtered.length ? new Set() : new Set(filtered.map(s => s.id)))
   }
 
-  async function handleBulkStatus(ids: string[], status: SessionStatus) {
+  async function handleBulkDelete(ids: string[]) {
     const supabase = createClient()
-    await supabase.from('sessions').update({ status }).in('id', ids)
-    setSessions(prev => prev.map(s => ids.includes(s.id) ? { ...s, status } : s))
+    await supabase.from('sessions').delete().in('id', ids)
+    setSessions(prev => prev.filter(s => !ids.includes(s.id)))
     setSelected(new Set())
   }
 
@@ -355,7 +355,7 @@ function ScheduleContent() {
         selected={selected}
         onSelectToggle={toggleSelect}
         onSelectAll={toggleAll}
-        onBulkStatusChange={handleBulkStatus}
+        onBulkDelete={handleBulkDelete}
         onSessionsChanged={handleSessionsChanged}
         classes={classes}
         teachers={teachers}

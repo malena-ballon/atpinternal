@@ -116,9 +116,9 @@ export async function logActivity(
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return
-  const { data: profile } = await supabase.from('users').select('name').eq('id', user.id).single()
+  const { data: profile } = await supabase.from('users').select('name, role').eq('id', user.id).single()
   const svc = createServiceClient()
-  await svc.from('activity_logs').insert({
+  const base = {
     user_id: user.id,
     user_name: profile?.name ?? 'Unknown',
     action,
@@ -126,7 +126,12 @@ export async function logActivity(
     entity_id: entityId,
     entity_name: entityName,
     description,
-  })
+  }
+  // Try with user_role first; fall back without it if the column doesn't exist yet
+  const { error: e1 } = await svc.from('activity_logs').insert({ ...base, user_role: profile?.role ?? 'teacher' })
+  if (e1) {
+    await svc.from('activity_logs').insert(base)
+  }
 }
 
 // ── Teacher profile save (service client — bypasses RLS for teacher self-edits) ─

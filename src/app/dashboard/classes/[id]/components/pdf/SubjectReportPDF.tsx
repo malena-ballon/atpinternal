@@ -1,4 +1,4 @@
-import { Document, Page, View, Text, StyleSheet } from '@react-pdf/renderer'
+import { Document, Page, View, Text, Image, StyleSheet } from '@react-pdf/renderer'
 import type { ExamStats } from '../PerformanceInsights'
 
 const C = { cyan: '#0BB5C7', dark: '#111827', mid: '#374151', muted: '#6B7280', border: '#E5E7EB', altRow: '#F9FAFB', success: '#16A34A', danger: '#DC2626' }
@@ -56,7 +56,10 @@ export default function SubjectReportPDF({ className, stats, classPassingPct, ma
     <Document>
       <Page size="A4" style={s.page}>
         {/* Header */}
-        <Text style={s.brand}>ACADGENIUS TUTORIAL POWERHOUSE</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+          <Image src={`${window.location.origin}/logo.jpg`} style={{ width: 30, height: 30, marginRight: 8, borderRadius: 4 }} />
+          <Text style={{ fontSize: 11, fontFamily: 'Helvetica-Bold', color: C.dark }}>Acadgenius Tutorial Powerhouse</Text>
+        </View>
         <Text style={s.title}>Subject Performance Report</Text>
         <Text style={s.subtitle}>{className}</Text>
         <Text style={s.examName}>{stats.subjectName}</Text>

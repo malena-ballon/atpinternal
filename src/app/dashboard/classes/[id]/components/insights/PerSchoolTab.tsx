@@ -5,6 +5,7 @@ import type { SchoolStats } from '../PerformanceInsights'
 import type { ExamRow } from '@/types'
 import ExportButton, { downloadBlob, pdfFileName } from '../pdf/ExportButton'
 import CopyableTable from '@/app/dashboard/components/CopyableTable'
+import { logActivity } from '@/app/actions'
 
 interface Props {
   className: string
@@ -22,6 +23,7 @@ export default function PerSchoolTab({ className, schoolStats, sortedExams }: Pr
       <SchoolReportPDF className={className} schoolStats={schoolStats} sortedExams={sortedExams} />
     ).toBlob()
     downloadBlob(blob, pdfFileName(className, 'School-Report'))
+    await logActivity('exported_pdf', 'class', null, className, `Downloaded School Report PDF for: ${className}`)
   }
   if (schoolStats.length === 0) {
     return (

@@ -34,6 +34,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       <Sidebar
         name={profile.name}
         role={profile.role}
+        pendingCount={pendingApprovals ?? 0}
       />
 
       {/* ── Main area ───────────────────────────────────────────── */}

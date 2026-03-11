@@ -9,7 +9,7 @@ import CopyableTable from '@/app/dashboard/components/CopyableTable'
 import type { SubjectRow } from '@/types'
 import { Mail } from 'lucide-react'
 import EmailComposeStep, { type EmailRecipient } from './EmailComposeStep'
-import { sendReportEmails } from '@/app/actions'
+import { sendReportEmails, logActivity } from '@/app/actions'
 
 interface Props {
   className: string
@@ -53,6 +53,7 @@ export default function OverallTab({ className, classOverTime, studentStats, cla
       setEmailRecipients(
         studentStats.map(s => ({ id: s.student.id, name: s.student.name, email: s.student.email, enabled: true }))
       )
+      await logActivity('exported_pdf', 'class', null, className, `Generated Class Report PDF for: ${className}`)
       setShowEmailModal(true)
     } catch (e) {
       console.error('PDF generation failed:', e)
@@ -63,6 +64,7 @@ export default function OverallTab({ className, classOverTime, studentStats, cla
 
   async function handleDownloadOnly() {
     if (generatedPDF) downloadBlob(generatedPDF, pdfFilename)
+    await logActivity('exported_pdf', 'class', null, className, `Downloaded Class Report PDF for: ${className}`)
     setShowEmailModal(false)
   }
 
@@ -91,6 +93,7 @@ export default function OverallTab({ className, classOverTime, studentStats, cla
         })
       )
       await sendReportEmails(recipientData, subject, body, signature, extraAttachData)
+      await logActivity('sent_email', 'class', null, className, `Sent Class Report email to ${enabledRecipients.length} recipient${enabledRecipients.length !== 1 ? 's' : ''} for: ${className}`)
       setShowEmailModal(false)
     } catch (e) {
       console.error('Send failed:', e)

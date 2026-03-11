@@ -6,6 +6,7 @@ import { Plus, Trash2, Loader2, Check, Upload, Download, Pencil, Search, X } fro
 import { createClient } from '@/utils/supabase/client'
 import type { StudentRow } from '@/types'
 import BulkPasteModal from './BulkPasteModal'
+import { logActivity } from '@/app/actions'
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -289,6 +290,18 @@ export default function StudentsManager({ classId, initialStudents }: Props) {
       setSaved(true); setTimeout(() => setSaved(false), 2500)
       setEditMode(false)
       router.refresh()
+
+      const addedNames = dirtyRows.filter(r => r._isNew).map(r => r.name.trim())
+      const updatedNames = dirtyRows.filter(r => !r._isNew).map(r => r.name.trim())
+      const removedNames = rows.filter(r => r.id && deletedIds.has(r.id)).map(r => r.name.trim())
+      function fmtNames(names: string[]) {
+        return names.length <= 3 ? names.join(', ') : `${names.slice(0, 3).join(', ')} +${names.length - 3} more`
+      }
+      const parts: string[] = []
+      if (addedNames.length) parts.push(`added ${addedNames.length}: ${fmtNames(addedNames)}`)
+      if (updatedNames.length) parts.push(`updated ${updatedNames.length}: ${fmtNames(updatedNames)}`)
+      if (removedNames.length) parts.push(`removed ${removedNames.length}: ${fmtNames(removedNames)}`)
+      if (parts.length) await logActivity('updated_students', 'class', classId, null, `Students — ${parts.join(' | ')}`)
     } catch (err: unknown) {
       setSaveError(err instanceof Error ? err.message : 'Save failed')
     } finally {
@@ -328,6 +341,14 @@ export default function StudentsManager({ classId, initialStudents }: Props) {
     router.refresh()
   }
 
+  const filteredRows = !editMode && q.trim()
+    ? rows.filter(r =>
+        r.name.toLowerCase().includes(q.toLowerCase()) ||
+        r.school.toLowerCase().includes(q.toLowerCase()) ||
+        r.email.toLowerCase().includes(q.toLowerCase())
+      )
+    : rows
+
   function exportCSV() {
     const header = 'Name,School,Email'
     const csvRows = rows.map(r =>
@@ -354,7 +375,7 @@ export default function StudentsManager({ classId, initialStudents }: Props) {
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3 mb-3">
         <span className="text-sm font-semibold shrink-0" style={{ color: 'var(--color-text-primary)' }}>
-          {rows.length} student{rows.length !== 1 ? 's' : ''}
+          {q.trim() && !editMode ? `${filteredRows.length} of ${rows.length}` : rows.length} student{rows.length !== 1 ? 's' : ''}
         </span>
 
         {!editMode && (
@@ -464,8 +485,8 @@ export default function StudentsManager({ classId, initialStudents }: Props) {
                 <th className="px-3 py-2.5 w-8">
                   <input
                     type="checkbox"
-                    checked={rows.length > 0 && selectedKeys.size === rows.length}
-                    onChange={() => toggleSelectAll(rows.map(r => r._key))}
+                    checked={filteredRows.length > 0 && filteredRows.every(r => selectedKeys.has(r._key))}
+                    onChange={() => toggleSelectAll(filteredRows.map(r => r._key))}
                     style={{ accentColor: '#0BB5C7' }}
                   />
                 </th>
@@ -477,15 +498,15 @@ export default function StudentsManager({ classId, initialStudents }: Props) {
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && (
+            {filteredRows.length === 0 && (
               <tr>
                 <td colSpan={6} className="px-4 py-12 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>
-                  {editMode ? 'No students yet. Add a row or use Paste Import.' : 'No students yet. Click Edit to add students.'}
+                  {editMode ? 'No students yet. Add a row or use Paste Import.' : q.trim() ? 'No students match your search.' : 'No students yet. Click Edit to add students.'}
                 </td>
               </tr>
             )}
-            {rows.map((row, i) => (
-              <tr key={row._key} style={{ borderBottom: i < rows.length - 1 ? '1px solid var(--color-border)' : 'none', backgroundColor: !editMode && selectedKeys.has(row._key) ? 'rgba(61,212,230,0.04)' : 'transparent' }}>
+            {filteredRows.map((row, i) => (
+              <tr key={row._key} style={{ borderBottom: i < filteredRows.length - 1 ? '1px solid var(--color-border)' : 'none', backgroundColor: !editMode && selectedKeys.has(row._key) ? 'rgba(61,212,230,0.04)' : 'transparent' }}>
                 {!editMode && (
                   <td className="px-3 py-2 w-8">
                     <input

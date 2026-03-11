@@ -1,8 +1,9 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus, FileText, Upload, Pencil, ChevronDown, ChevronRight, Trash2, Loader2 } from 'lucide-react'
+import { Plus, FileText, Upload, Pencil, ChevronDown, ChevronRight, Trash2, Loader2, Search, X } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
+import { logActivity } from '@/app/actions'
 import type { ExamRow, ScoreRow, SubjectRow, StudentRow } from '@/types'
 import ExamFormModal from './ExamFormModal'
 import BulkScoreModal from './BulkScoreModal'
@@ -28,6 +29,11 @@ export default function ExamsManager({ classId, classPassingPct, exams, subjects
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [deletingSelected, setDeletingSelected] = useState(false)
   const [fromCreateExam, setFromCreateExam] = useState<ExamRow | null>(null)
+  const [q, setQ] = useState('')
+
+  const filteredExams = q.trim()
+    ? exams.filter(e => e.name.toLowerCase().includes(q.toLowerCase()))
+    : exams
 
   function handleExamSaved(saved: ExamRow) {
     const isNew = !exams.find(e => e.id === saved.id)
@@ -71,7 +77,9 @@ export default function ExamsManager({ classId, classPassingPct, exams, subjects
     if (!window.confirm(`Delete ${selectedIds.size} exam${selectedIds.size !== 1 ? 's' : ''}? This will also remove all scores for these exams. This cannot be undone.`)) return
     setDeletingSelected(true)
     const supabase = createClient()
+    const names = exams.filter(e => selectedIds.has(e.id)).map(e => e.name).join(', ')
     await supabase.from('exams').delete().in('id', Array.from(selectedIds))
+    await logActivity('deleted_exams', 'exam', null, null, `Deleted ${selectedIds.size} exam${selectedIds.size !== 1 ? 's' : ''}: ${names}`)
     onExamsDeleted?.(Array.from(selectedIds))
     setSelectedIds(new Set())
     setDeletingSelected(false)
@@ -82,10 +90,10 @@ export default function ExamsManager({ classId, classPassingPct, exams, subjects
   return (
     <div className="space-y-3">
       {/* Toolbar */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-            {exams.length} exam{exams.length !== 1 ? 's' : ''}
+            {q.trim() ? `${filteredExams.length} of ${exams.length}` : exams.length} exam{exams.length !== 1 ? 's' : ''}
           </span>
           {exams.length > 0 && (
             <label className="flex items-center gap-1.5 text-xs cursor-pointer" style={{ color: 'var(--color-text-muted)' }}>
@@ -99,7 +107,30 @@ export default function ExamsManager({ classId, classPassingPct, exams, subjects
             </label>
           )}
         </div>
-        <div className="flex items-center gap-2">
+
+        {exams.length > 0 && (
+          <div className="relative">
+            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--color-text-muted)' }} />
+            <input
+              type="text"
+              placeholder="Search exams…"
+              value={q}
+              onChange={e => setQ(e.target.value)}
+              style={{
+                padding: '5px 28px 5px 28px', borderRadius: '8px',
+                border: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg)',
+                color: 'var(--color-text-primary)', fontSize: '12px', outline: 'none', width: '180px',
+              }}
+            />
+            {q && (
+              <button onClick={() => setQ('')} className="absolute right-2 top-1/2 -translate-y-1/2">
+                <X size={11} style={{ color: 'var(--color-text-muted)' }} />
+              </button>
+            )}
+          </div>
+        )}
+
+        <div className="ml-auto flex items-center gap-2">
           {selectedIds.size > 0 && (
             <button
               onClick={handleDeleteSelected}
@@ -127,17 +158,22 @@ export default function ExamsManager({ classId, classPassingPct, exams, subjects
           No exams yet. Click &ldquo;Add Exam&rdquo; to create one.
         </p>
       )}
+      {exams.length > 0 && filteredExams.length === 0 && (
+        <p className="py-8 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>
+          No exams match your search.
+        </p>
+      )}
 
       {/* Exam list */}
-      {exams.length > 0 && (
+      {filteredExams.length > 0 && (
         <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--color-border)' }}>
-          {exams.map((exam, i) => {
+          {filteredExams.map((exam, i) => {
             const isExpanded = expandedExamId === exam.id
             const scores = importedScores[exam.id]
             const isSelected = selectedIds.has(exam.id)
 
             return (
-              <div key={exam.id} style={{ borderBottom: i < exams.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
+              <div key={exam.id} style={{ borderBottom: i < filteredExams.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
                 {/* Exam row */}
                 <div
                   className="flex items-center gap-3 px-4 py-3"

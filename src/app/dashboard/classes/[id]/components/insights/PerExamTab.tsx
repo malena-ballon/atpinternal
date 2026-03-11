@@ -9,7 +9,7 @@ import CopyableTable from '@/app/dashboard/components/CopyableTable'
 import type { SubjectRow } from '@/types'
 import { Mail } from 'lucide-react'
 import EmailComposeStep, { type EmailRecipient } from './EmailComposeStep'
-import { sendReportEmails } from '@/app/actions'
+import { sendReportEmails, logActivity } from '@/app/actions'
 
 interface Props {
   className: string
@@ -177,6 +177,7 @@ export default function PerExamTab({ className, examStats, classPassingPct, subj
 
   async function handleDownloadOnly() {
     await downloadPDFs(generatedPDFs)
+    await logActivity('exported_pdf', 'class', null, className, `Downloaded Exam Report PDF(s) for: ${className} (${generatedPDFs.length} file${generatedPDFs.length !== 1 ? 's' : ''})`)
     closeExportModal()
   }
 
@@ -214,6 +215,7 @@ export default function PerExamTab({ className, examStats, classPassingPct, subj
       )
 
       await sendReportEmails(recipientData, subject, body, signature, extraAttachData)
+      await logActivity('sent_email', 'class', null, className, `Sent Exam Report email to ${enabledRecipients.length} recipient${enabledRecipients.length !== 1 ? 's' : ''} for: ${className}`)
       closeExportModal()
     } catch (e) {
       console.error('Send failed:', e)

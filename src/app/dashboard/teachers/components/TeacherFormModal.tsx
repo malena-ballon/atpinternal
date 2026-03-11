@@ -112,8 +112,8 @@ export default function TeacherFormModal({ teacher, onClose, onSaved }: Props) {
       data!.id,
       payload.name,
       isEdit
-        ? `Updated teacher profile: ${payload.name}`
-        : `Added new teacher: ${payload.name}`
+        ? `Updated teacher profile: ${payload.name} (${payload.email})${payload.specialization ? `, specialization: ${payload.specialization}` : ''}`
+        : `Added new teacher: ${payload.name} (${payload.email})${payload.specialization ? `, specialization: ${payload.specialization}` : ''}`
     )
 
     setLoading(false)
