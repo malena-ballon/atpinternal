@@ -92,7 +92,7 @@ const TABS = [
 
 
 export default function PerformanceInsights({ className, classId, exams, subjects, classStudents, classPassingPct, atRiskThreshold, scoreBrackets }: Props) {
-  const effectiveBrackets = scoreBrackets ?? DEFAULT_BRACKETS
+  const effectiveBrackets = Array.isArray(scoreBrackets) ? scoreBrackets : DEFAULT_BRACKETS
   const effectiveAtRisk = atRiskThreshold ?? classPassingPct
   const [allScores, setAllScores] = useState<ScoreRow[]>([])
   const [loading, setLoading] = useState(true)

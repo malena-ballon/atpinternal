@@ -1,8 +1,10 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-// Accessible without any session
-const PUBLIC_PATHS = ['/login', '/register', '/auth', '/schedule']
+// Auth pages — redirect logged-in users away from these
+const AUTH_PATHS = ['/login', '/register', '/auth']
+// Fully public — anyone can access, logged in or not (no redirect)
+const OPEN_PATHS = ['/schedule']
 // Accessible with a session regardless of approval status
 const SEMI_PUBLIC_PATHS = ['/pending']
 
@@ -40,12 +42,16 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser()
 
   const { pathname } = request.nextUrl
-  const isPublic = PUBLIC_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'))
+  const isAuth = AUTH_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'))
+  const isOpen = OPEN_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'))
   const isSemiPublic = SEMI_PUBLIC_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'))
+
+  // ── Fully public pages — let anyone through ─────────────────
+  if (isOpen) return supabaseResponse
 
   // ── No session ──────────────────────────────────────────────
   if (!user) {
-    if (isPublic || isSemiPublic) return supabaseResponse
+    if (isAuth || isSemiPublic) return supabaseResponse
     return redirectTo(request, '/login')
   }
 
@@ -59,7 +65,7 @@ export async function middleware(request: NextRequest) {
   const status = profile?.status
 
   // Already logged in → redirect away from auth pages
-  if (isPublic) {
+  if (isAuth) {
     return redirectTo(request, status === 'active' ? '/dashboard' : '/pending')
   }
 
