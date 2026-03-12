@@ -14,7 +14,7 @@ export default async function PublicSchedulePage({ params }: { params: Promise<{
   const { classId } = await params
   const supabase = createServiceClient()
 
-  const [{ data: cls }, { data: sessions }] = await Promise.all([
+  const [{ data: cls }, { data: sessions }, { data: clsExtra }] = await Promise.all([
     supabase.from('classes').select('id, name, status').eq('id', classId).single(),
     supabase.from('sessions')
       .select('id, date, start_time, end_time, status, topic, subjects(name)')
@@ -22,9 +22,14 @@ export default async function PublicSchedulePage({ params }: { params: Promise<{
       .in('status', ['scheduled', 'in_progress'])
       .order('date')
       .order('start_time'),
+    supabase.from('classes').select('public_notes, public_notes_position').eq('id', classId).single(),
   ])
 
   if (!cls || cls.status !== 'active') notFound()
+
+  const extra = clsExtra as { public_notes?: string | null; public_notes_position?: string | null } | null
+  const publicNotes = extra?.public_notes ?? null
+  const notesPosition = extra?.public_notes_position === 'above' ? 'above' : 'below'
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#f8fafc' }}>
@@ -75,6 +80,14 @@ export default async function PublicSchedulePage({ params }: { params: Promise<{
 
       {/* Content */}
       <main className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-3">
+
+        {/* Admin notes — above */}
+        {publicNotes && notesPosition === 'above' && (
+          <div className="rounded-2xl p-5 bg-white shadow-sm border border-gray-100">
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">Notes from Admin</p>
+            <div className="text-sm text-gray-700 leading-relaxed" dangerouslySetInnerHTML={{ __html: publicNotes }} />
+          </div>
+        )}
 
         {!sessions || sessions.length === 0 ? (
           <div className="rounded-2xl p-10 text-center bg-white shadow-sm border border-gray-100">
@@ -186,6 +199,14 @@ export default async function PublicSchedulePage({ params }: { params: Promise<{
               })}
             </div>
           </>
+        )}
+
+        {/* Admin notes — below */}
+        {publicNotes && notesPosition === 'below' && (
+          <div className="rounded-2xl p-5 bg-white shadow-sm border border-gray-100">
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">Notes from Admin</p>
+            <div className="text-sm text-gray-700 leading-relaxed" dangerouslySetInnerHTML={{ __html: publicNotes }} />
+          </div>
         )}
 
         {/* Footer */}

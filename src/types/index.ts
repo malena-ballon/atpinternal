@@ -25,6 +25,8 @@ export interface ClassRow {
   rate: number | null
   at_risk_threshold: number | null
   score_brackets: ScoreBracket[] | null
+  public_notes: string | null
+  public_notes_position: 'above' | 'below' | null
   created_at: string
   updated_at: string
 }

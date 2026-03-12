@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { Globe, DollarSign } from 'lucide-react'
+import { Globe, DollarSign, FileText, X } from 'lucide-react'
 import type { SubjectRow, SessionRow, TeacherRow, StudentRow, ExamRow, ClassRow } from '@/types'
 import StatusBadge from '@/app/dashboard/components/StatusBadge'
 import SubjectsManager from './SubjectsManager'
@@ -10,6 +10,7 @@ import SessionsSpreadsheet from './SessionsSpreadsheet'
 import StudentsManager from './StudentsManager'
 import ExamsManager from './ExamsManager'
 import PerformanceInsights from './PerformanceInsights'
+import PublicNotesEditor from './PublicNotesEditor'
 
 function Section({ title, children, scrollable }: { title: string; children: React.ReactNode; scrollable?: boolean }) {
   return (
@@ -39,6 +40,7 @@ interface Props {
 export default function ClassTabs({ cls, subjects, sessionsData, teachersData, students, examsData }: Props) {
   const [tab, setTab] = useState<Tab>('class')
   const [exams, setExams] = useState<ExamRow[]>(examsData)
+  const [notesOpen, setNotesOpen] = useState(false)
 
   function handleExamSaved(saved: ExamRow) {
     setExams(prev => {
@@ -137,6 +139,15 @@ export default function ClassTabs({ cls, subjects, sessionsData, teachersData, s
                         className="text-sm hover:underline" style={{ color: '#0BB5C7' }}>
                         /schedule/{cls.id.slice(0, 8)}…
                       </Link>
+                      <button
+                        onClick={() => setNotesOpen(true)}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-medium transition-colors hover:opacity-80"
+                        style={{ backgroundColor: 'rgba(11,181,199,0.1)', color: '#0BB5C7' }}
+                        title="Edit public schedule notes"
+                      >
+                        <FileText size={11} />
+                        Notes
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -199,6 +210,44 @@ export default function ClassTabs({ cls, subjects, sessionsData, teachersData, s
             students={students}
             initialStudentCount={sessionsData[0]?.student_count ?? 0}
           />
+        </div>
+      )}
+
+      {/* Public Notes modal */}
+      {notesOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+          onClick={e => { if (e.target === e.currentTarget) setNotesOpen(false) }}
+        >
+          <div
+            className="w-full max-w-2xl rounded-2xl shadow-xl flex flex-col"
+            style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', maxHeight: '80vh' }}
+          >
+            {/* Modal header */}
+            <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: '1px solid var(--color-border)' }}>
+              <div>
+                <h2 className="text-base font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                  Public Schedule Notes
+                </h2>
+                <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
+                  Visible to anyone who opens the public schedule link
+                </p>
+              </div>
+              <button
+                onClick={() => setNotesOpen(false)}
+                className="w-8 h-8 flex items-center justify-center rounded-lg transition-colors hover:bg-black/5"
+                style={{ color: 'var(--color-text-muted)' }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Modal body */}
+            <div className="p-6 overflow-y-auto">
+              <PublicNotesEditor classId={cls.id} initialNotes={cls.public_notes ?? null} initialPosition={cls.public_notes_position ?? null} />
+            </div>
+          </div>
         </div>
       )}
     </div>

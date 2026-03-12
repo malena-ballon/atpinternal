@@ -105,6 +105,17 @@ export async function sendTeacherInvite(teacherId: string): Promise<{ ok: boolea
   return { ok: true }
 }
 
+// ── Public notes ───────────────────────────────────────────────────────────────
+export async function savePublicNotes(classId: string, html: string, position: 'above' | 'below'): Promise<{ ok: boolean; error?: string }> {
+  const supabase = await createClient()
+  const { error } = await supabase
+    .from('classes')
+    .update({ public_notes: html || null, public_notes_position: position })
+    .eq('id', classId)
+  if (error) return { ok: false, error: error.message }
+  return { ok: true }
+}
+
 // ── Activity logging ───────────────────────────────────────────────────────────
 export async function logActivity(
   action: string,
