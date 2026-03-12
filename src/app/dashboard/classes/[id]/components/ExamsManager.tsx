@@ -261,6 +261,7 @@ export default function ExamsManager({ classId, className, classPassingPct, exam
                       exam={exam}
                       classPassingPct={classPassingPct}
                       classId={classId}
+                      className={className}
                       classStudents={classStudents}
                       subjects={subjects}
                       externalScores={scores ?? null}

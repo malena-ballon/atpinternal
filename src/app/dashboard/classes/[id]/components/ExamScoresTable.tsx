@@ -13,12 +13,13 @@ interface Props {
   exam: ExamRow
   classPassingPct: number
   classId: string
+  className: string
   classStudents: StudentRow[]
   subjects: SubjectRow[]
   externalScores?: ScoreRow[] | null
 }
 
-export default function ExamScoresTable({ exam, classPassingPct, classId, classStudents, subjects, externalScores }: Props) {
+export default function ExamScoresTable({ exam, classPassingPct, classId, className, classStudents, subjects, externalScores }: Props) {
   const [scores, setScores] = useState<ScoreRow[] | null>(externalScores ?? null)
   const [loading, setLoading] = useState(!externalScores)
   const [sortCol, setSortCol] = useState<SortCol>('pct')
@@ -240,6 +241,7 @@ export default function ExamScoresTable({ exam, classPassingPct, classId, classS
         <BulkScoreModal
           exam={exam}
           classId={classId}
+          className={className}
           classStudents={classStudents}
           classPassingPct={classPassingPct}
           subjects={subjects}
