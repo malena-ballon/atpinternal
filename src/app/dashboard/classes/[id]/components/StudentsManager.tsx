@@ -24,6 +24,7 @@ interface Sel { r1: number; r2: number; c1: number; c2: number }
 
 interface Props {
   classId: string
+  className: string
   initialStudents: StudentRow[]
 }
 
@@ -68,7 +69,7 @@ function applyCellValue(row: DraftRow, c: number, raw: string) {
 
 // ─── Component ─────────────────────────────────────────────────────────────────
 
-export default function StudentsManager({ classId, initialStudents }: Props) {
+export default function StudentsManager({ classId, className, initialStudents }: Props) {
   const router = useRouter()
   const [rows, setRows] = useState<DraftRow[]>(() =>
     [...initialStudents].sort((a, b) => a.name.localeCompare(b.name)).map(studentToRow)
@@ -301,7 +302,7 @@ export default function StudentsManager({ classId, initialStudents }: Props) {
       if (addedNames.length) parts.push(`added ${addedNames.length}: ${fmtNames(addedNames)}`)
       if (updatedNames.length) parts.push(`updated ${updatedNames.length}: ${fmtNames(updatedNames)}`)
       if (removedNames.length) parts.push(`removed ${removedNames.length}: ${fmtNames(removedNames)}`)
-      if (parts.length) await logActivity('updated_students', 'class', classId, null, `Students — ${parts.join(' | ')}`)
+      if (parts.length) await logActivity('updated_students', 'class', classId, className, `In "${className}" students: ${parts.join(' | ')}`)
     } catch (err: unknown) {
       setSaveError(err instanceof Error ? err.message : 'Save failed')
     } finally {

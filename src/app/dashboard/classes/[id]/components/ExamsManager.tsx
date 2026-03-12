@@ -11,6 +11,7 @@ import ExamScoresTable from './ExamScoresTable'
 
 interface Props {
   classId: string
+  className: string
   classPassingPct: number
   exams: ExamRow[]
   subjects: SubjectRow[]
@@ -20,7 +21,7 @@ interface Props {
   onExamsDeleted?: (ids: string[]) => void
 }
 
-export default function ExamsManager({ classId, classPassingPct, exams, subjects, classStudents, onExamSaved, onExamTotalItemsUpdate, onExamsDeleted }: Props) {
+export default function ExamsManager({ classId, className, classPassingPct, exams, subjects, classStudents, onExamSaved, onExamTotalItemsUpdate, onExamsDeleted }: Props) {
   const [showFormModal, setShowFormModal] = useState(false)
   const [editTarget, setEditTarget] = useState<ExamRow | null>(null)
   const [scoreModalExam, setScoreModalExam] = useState<ExamRow | null>(null)
@@ -79,7 +80,7 @@ export default function ExamsManager({ classId, classPassingPct, exams, subjects
     const supabase = createClient()
     const names = exams.filter(e => selectedIds.has(e.id)).map(e => e.name).join(', ')
     await supabase.from('exams').delete().in('id', Array.from(selectedIds))
-    await logActivity('deleted_exams', 'exam', null, null, `Deleted ${selectedIds.size} exam${selectedIds.size !== 1 ? 's' : ''}: ${names}`)
+    await logActivity('deleted_exams', 'exam', null, className, `In "${className}" deleted ${selectedIds.size} exam${selectedIds.size !== 1 ? 's' : ''}: ${names}`)
     onExamsDeleted?.(Array.from(selectedIds))
     setSelectedIds(new Set())
     setDeletingSelected(false)
@@ -276,6 +277,7 @@ export default function ExamsManager({ classId, classPassingPct, exams, subjects
       {showFormModal && (
         <ExamFormModal
           classId={classId}
+          className={className}
           classPassingPct={classPassingPct}
           subjects={subjects}
           exam={editTarget ?? undefined}
@@ -289,6 +291,7 @@ export default function ExamsManager({ classId, classPassingPct, exams, subjects
         <BulkScoreModal
           exam={scoreModalExam}
           classId={classId}
+          className={className}
           classStudents={classStudents}
           classPassingPct={classPassingPct}
           subjects={subjects.filter(s => s.name.toLowerCase() !== 'assessment')}

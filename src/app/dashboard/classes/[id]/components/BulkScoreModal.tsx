@@ -46,6 +46,7 @@ interface Sel { r1: number; r2: number; c1: number; c2: number }
 interface Props {
   exam: ExamRow
   classId: string
+  className: string
   classStudents: StudentRow[]
   classPassingPct: number
   subjects: SubjectRow[]
@@ -68,7 +69,7 @@ const cellInputStyle: React.CSSProperties = {
   fontFamily: 'inherit',
 }
 
-export default function BulkScoreModal({ exam, classId, classStudents, classPassingPct, subjects, initialRows, onClose, onBack, onImported }: Props) {
+export default function BulkScoreModal({ exam, classId, className, classStudents, classPassingPct, subjects, initialRows, onClose, onBack, onImported }: Props) {
   const examSubjects: SubjectRow[] = (() => {
     const ids = exam.subject_ids?.length ? exam.subject_ids : exam.subject_id ? [exam.subject_id] : []
     return ids.map(id => subjects.find(s => s.id === id)).filter(Boolean) as SubjectRow[]
@@ -339,7 +340,7 @@ export default function BulkScoreModal({ exam, classId, classStudents, classPass
     }
 
     await supabase.from('exams').update({ total_items: detectedTotal }).eq('id', exam.id)
-    await logActivity('added_score', 'exam', exam.id, exam.name, `Imported ${results.length} score${results.length !== 1 ? 's' : ''} for exam: ${exam.name}`)
+    await logActivity('added_score', 'exam', exam.id, exam.name, `In "${className}" imported ${results.length} score${results.length !== 1 ? 's' : ''} for exam "${exam.name}"`)
     setLoading(false)
     onImported(results, detectedTotal)
   }

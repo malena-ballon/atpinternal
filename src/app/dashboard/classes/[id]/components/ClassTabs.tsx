@@ -152,11 +152,12 @@ export default function ClassTabs({ cls, subjects, sessionsData, teachersData, s
           {/* Row 2: Students + Exams */}
           <div className="grid grid-cols-2 gap-6">
             <Section title="Students" scrollable>
-              <StudentsManager classId={cls.id} initialStudents={students} />
+              <StudentsManager classId={cls.id} className={cls.name} initialStudents={students} />
             </Section>
             <Section title="Exams" scrollable>
               <ExamsManager
                 classId={cls.id}
+                className={cls.name}
                 classPassingPct={cls.default_passing_pct}
                 exams={exams}
                 subjects={subjects}

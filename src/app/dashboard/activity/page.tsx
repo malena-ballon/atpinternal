@@ -88,7 +88,7 @@ export default async function ActivityPage() {
               </tr>
             </thead>
             <tbody>
-              {logs.map((log, i) => {
+              {(logs ?? []).map((log, i) => {
                 const meta = getActionMeta(log.action)
                 const Icon = meta.icon
                 const { date, time } = formatDateTime(log.created_at)

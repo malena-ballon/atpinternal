@@ -21,6 +21,7 @@ const inputStyle: React.CSSProperties = {
 
 interface Props {
   classId: string
+  className: string
   classPassingPct: number
   subjects: SubjectRow[]
   exam?: ExamRow
@@ -28,7 +29,7 @@ interface Props {
   onSaved: (exam: ExamRow) => void
 }
 
-export default function ExamFormModal({ classId, classPassingPct, subjects, exam, onClose, onSaved }: Props) {
+export default function ExamFormModal({ classId, className, classPassingPct, subjects, exam, onClose, onSaved }: Props) {
   const isEdit = !!exam
   const [name, setName] = useState(exam?.name ?? '')
   const [date, setDate] = useState(exam?.date ?? '')
@@ -88,8 +89,8 @@ export default function ExamFormModal({ classId, classPassingPct, subjects, exam
       data.id,
       name.trim(),
       isEdit
-        ? `Updated exam "${name.trim()}" — date: ${dateStr}, subjects: ${subjectNames}${pctValue != null ? `, passing override: ${pctValue}%` : ''}`
-        : `Added exam "${name.trim()}" — date: ${dateStr}, subjects: ${subjectNames}`
+        ? `In "${className}" updated exam "${name.trim()}" — date: ${dateStr}, subjects: ${subjectNames}${pctValue != null ? `, passing override: ${pctValue}%` : ''}`
+        : `In "${className}" added exam "${name.trim()}" — date: ${dateStr}, subjects: ${subjectNames}`
     )
     onSaved(formattedData as unknown as ExamRow)
   }
