@@ -368,6 +368,7 @@ export default function ClassesTable({ initialClasses }: { initialClasses: Class
                           rate: null, zoom_link: cls.zoom_link,
                           description: null, default_passing_pct: 75,
                           at_risk_threshold: null, score_brackets: null,
+                          public_notes: null, public_notes_position: null,
                           created_at: '', updated_at: '',
                         })}
                         onCopyLink={() => copyLink(cls.id)}
