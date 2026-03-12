@@ -72,7 +72,6 @@ export default function OverallTab({ className, classOverTime, studentStats, cla
     if (!generatedPDF) return
     setIsSending(true)
     try {
-      downloadBlob(generatedPDF, pdfFilename)
       const toBase64 = (blob: Blob): Promise<string> => new Promise((res, rej) => {
         const reader = new FileReader()
         reader.onload = () => res((reader.result as string).split(',')[1])

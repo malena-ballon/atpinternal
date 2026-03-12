@@ -173,7 +173,6 @@ export default function PerStudentTab({ className, studentStats, totalExams, tot
   async function handleSendAndDownload(subject: string, body: string, signature: string, extraFiles: File[]) {
     setIsSending(true)
     try {
-      await downloadPDFs(generatedPDFs)
       const toBase64 = (blob: Blob): Promise<string> => new Promise((res, rej) => {
         const reader = new FileReader()
         reader.onload = () => res((reader.result as string).split(',')[1])

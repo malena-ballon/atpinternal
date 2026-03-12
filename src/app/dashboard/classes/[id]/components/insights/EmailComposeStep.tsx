@@ -108,9 +108,27 @@ export default function EmailComposeStep({
 
       {/* Recipients */}
       <div>
-        <p className="text-xs font-semibold mb-1.5 uppercase tracking-wide" style={{ color: 'var(--color-text-muted)' }}>
-          Recipients
-        </p>
+        <div className="flex items-center justify-between mb-1.5">
+          <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--color-text-muted)' }}>
+            Recipients
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => onRecipientsChange(recipients.map(r => ({ ...r, enabled: !!r.email })))}
+              className="text-xs px-2 py-0.5 rounded"
+              style={{ border: '1px solid var(--color-border)', color: '#0BB5C7' }}
+            >
+              Select All
+            </button>
+            <button
+              onClick={() => onRecipientsChange(recipients.map(r => ({ ...r, enabled: false })))}
+              className="text-xs px-2 py-0.5 rounded"
+              style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-muted)' }}
+            >
+              Deselect All
+            </button>
+          </div>
+        </div>
         <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--color-border)', maxHeight: 180, overflowY: 'auto' }}>
           {recipients.map((r, i) => (
             <label
