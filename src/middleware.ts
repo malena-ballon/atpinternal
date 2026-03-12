@@ -40,9 +40,8 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser()
 
   const { pathname } = request.nextUrl
-// Replace your .some(p => pathname.startsWith(p)) with this:
-  const isPublic = PUBLIC_PATHS.includes(pathname)
-  const isSemiPublic = SEMI_PUBLIC_PATHS.includes(pathname)
+  const isPublic = PUBLIC_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'))
+  const isSemiPublic = SEMI_PUBLIC_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'))
 
   // ── No session ──────────────────────────────────────────────
   if (!user) {
