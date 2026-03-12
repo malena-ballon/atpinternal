@@ -59,6 +59,8 @@ export default function ClassSessionsTable({
     updated_at: '',
     at_risk_threshold: 0,
     score_brackets: [],
+    public_notes: null,
+    public_notes_position: null,
   }
 
   useEffect(() => {
