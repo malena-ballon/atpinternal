@@ -67,6 +67,11 @@ function applyCellValue(row: DraftRow, c: number, raw: string) {
   else if (c === 2) row.email = raw.trim().toLowerCase()
 }
 
+const NA_RE = /^(n\/a|na)$/i
+function isBlankOrNa(v: string): boolean {
+  return !v.trim() || NA_RE.test(v.trim())
+}
+
 // ─── Component ─────────────────────────────────────────────────────────────────
 
 export default function StudentsManager({ classId, className, initialStudents }: Props) {
@@ -87,6 +92,11 @@ export default function StudentsManager({ classId, className, initialStudents }:
   const savedSnapshot = useRef<DraftRow[]>([])
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
   const [deletingSelected, setDeletingSelected] = useState(false)
+  const [showCleanupDialog, setShowCleanupDialog] = useState(false)
+  const [cleanupRowKeys, setCleanupRowKeys] = useState<Set<string>>(new Set())
+  const [showDupDialog, setShowDupDialog] = useState(false)
+  const [dupRowKeys, setDupRowKeys] = useState<Set<string>>(new Set())
+  const [pendingSaveRows, setPendingSaveRows] = useState<DraftRow[] | null>(null)
 
   const dirtyCount = rows.filter(r => r._dirty).length + deletedIds.size
 
@@ -132,7 +142,7 @@ export default function StudentsManager({ classId, className, initialStudents }:
         e.preventDefault()
         navigator.clipboard.readText().then(text => {
           if (!text) return
-          const pastedRows = text.trim().split('\n').filter(Boolean)
+          const pastedRows = text.trimEnd().split('\n')
           setRows(prev => {
             const next = [...prev]
             if (pastedRows.length === 1 && !pastedRows[0].includes('\t')) {
@@ -199,7 +209,7 @@ export default function StudentsManager({ classId, className, initialStudents }:
     e.preventDefault()
     const text = e.clipboardData.getData('text/plain')
     if (!text.trim()) return
-    const pastedRows = text.trim().split('\n').filter(Boolean)
+    const pastedRows = text.trimEnd().split('\n')
     setRows(prev => {
       const next = [...prev]
       const rowIdx = next.findIndex(r => r._key === rowKey)
@@ -219,34 +229,44 @@ export default function StudentsManager({ classId, className, initialStudents }:
     })
   }
 
-  async function handleSave() {
+  function findDupNameKeys(rowsToCheck: DraftRow[]): Set<string> {
+    const seen = new Set<string>()
+    const dups = new Set<string>()
+    rowsToCheck.forEach(r => {
+      const n = r.name.trim().toLowerCase()
+      if (!n) return
+      if (seen.has(n)) dups.add(r._key)
+      else seen.add(n)
+    })
+    return dups
+  }
+
+  function checkDupsAndSave(rowsToCheck: DraftRow[]) {
+    const dups = findDupNameKeys(rowsToCheck)
+    if (dups.size > 0) {
+      setDupRowKeys(dups)
+      setPendingSaveRows(rowsToCheck)
+      setShowDupDialog(true)
+      return
+    }
+    doSave(rowsToCheck)
+  }
+
+  function handleSave() {
+    const blankNaRows = rows.filter(r => r._isNew && isBlankOrNa(r.name) && isBlankOrNa(r.school) && isBlankOrNa(r.email))
+    if (blankNaRows.length > 0) {
+      setCleanupRowKeys(new Set(blankNaRows.map(r => r._key)))
+      setShowCleanupDialog(true)
+      return
+    }
+    checkDupsAndSave(rows)
+  }
+
+  async function doSave(rowsToSave: DraftRow[]) {
     setSaving(true); setSaveError('')
 
-    // Duplicate name check
-    const existingNames = new Set(rows.filter(r => r.id && !r._isNew).map(r => r.name.trim().toLowerCase()))
-    const newRows = rows.filter(r => r._isNew && r.name.trim())
-    for (const row of newRows) {
-      const normalized = row.name.trim().toLowerCase()
-      if (existingNames.has(normalized)) {
-        setSaveError(`Duplicate student name: "${row.name.trim()}". Each student must have a unique name.`)
-        setSaving(false)
-        return
-      }
-    }
-    // Also check for duplicates within the new rows themselves
-    const newNamesSet = new Set<string>()
-    for (const row of newRows) {
-      const normalized = row.name.trim().toLowerCase()
-      if (newNamesSet.has(normalized)) {
-        setSaveError(`Duplicate student name: "${row.name.trim()}". Each student must have a unique name.`)
-        setSaving(false)
-        return
-      }
-      newNamesSet.add(normalized)
-    }
-
     const supabase = createClient()
-    const dirtyRows = rows.filter(r => r._dirty)
+    const dirtyRows = rowsToSave.filter(r => r._dirty)
     try {
       if (deletedIds.size > 0) {
         const { error } = await supabase
@@ -294,7 +314,7 @@ export default function StudentsManager({ classId, className, initialStudents }:
 
       const addedNames = dirtyRows.filter(r => r._isNew).map(r => r.name.trim())
       const updatedNames = dirtyRows.filter(r => !r._isNew).map(r => r.name.trim())
-      const removedNames = rows.filter(r => r.id && deletedIds.has(r.id)).map(r => r.name.trim())
+      const removedNames = rowsToSave.filter(r => r.id && deletedIds.has(r.id)).map(r => r.name.trim())
       function fmtNames(names: string[]) {
         return names.length <= 3 ? names.join(', ') : `${names.slice(0, 3).join(', ')} +${names.length - 3} more`
       }
@@ -350,6 +370,10 @@ export default function StudentsManager({ classId, className, initialStudents }:
       )
     : rows
 
+  const nameCounts = new Map<string, number>()
+  rows.forEach(r => { const n = r.name.trim().toLowerCase(); if (n) nameCounts.set(n, (nameCounts.get(n) ?? 0) + 1) })
+  const dupNameKeys = new Set(rows.filter(r => (nameCounts.get(r.name.trim().toLowerCase()) ?? 0) > 1).map(r => r._key))
+
   function exportCSV() {
     const header = 'Name,School,Email'
     const csvRows = rows.map(r =>
@@ -365,9 +389,10 @@ export default function StudentsManager({ classId, className, initialStudents }:
 
   function cellStyle(r: number, c: number, row: DraftRow): React.CSSProperties {
     const selected = inSel(r, c)
+    const isDupName = c === 0 && dupNameKeys.has(row._key)
     return {
-      backgroundColor: selected ? 'rgba(11,181,199,0.1)' : row._dirty ? 'rgba(61,212,230,0.02)' : 'transparent',
-      boxShadow: selected ? 'inset 0 0 0 1px rgba(11,181,199,0.45)' : 'none',
+      backgroundColor: selected ? 'rgba(11,181,199,0.1)' : isDupName ? 'rgba(239,68,68,0.08)' : row._dirty ? 'rgba(61,212,230,0.02)' : 'transparent',
+      boxShadow: selected ? 'inset 0 0 0 1px rgba(11,181,199,0.45)' : isDupName ? 'inset 0 0 0 1px rgba(239,68,68,0.25)' : 'none',
     }
   }
 
@@ -507,7 +532,7 @@ export default function StudentsManager({ classId, className, initialStudents }:
               </tr>
             )}
             {filteredRows.map((row, i) => (
-              <tr key={row._key} style={{ borderBottom: i < filteredRows.length - 1 ? '1px solid var(--color-border)' : 'none', backgroundColor: !editMode && selectedKeys.has(row._key) ? 'rgba(61,212,230,0.04)' : 'transparent' }}>
+              <tr key={row._key} style={{ borderBottom: i < filteredRows.length - 1 ? '1px solid var(--color-border)' : 'none', backgroundColor: !editMode && selectedKeys.has(row._key) ? 'rgba(61,212,230,0.04)' : dupNameKeys.has(row._key) ? 'rgba(239,68,68,0.04)' : 'transparent' }}>
                 {!editMode && (
                   <td className="px-3 py-2 w-8">
                     <input
@@ -616,6 +641,85 @@ export default function StudentsManager({ classId, className, initialStudents }:
                 className="px-4 py-2 text-sm font-semibold rounded-xl text-white"
                 style={{ backgroundColor: 'var(--color-danger)' }}>
                 Discard
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showCleanupDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.4)' }}>
+          <div className="rounded-2xl p-6 w-full max-w-sm space-y-4" style={{ backgroundColor: 'var(--color-surface)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+            <h3 className="text-base font-semibold" style={{ color: 'var(--color-text-primary)' }}>Blank / N/A rows detected</h3>
+            <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+              {cleanupRowKeys.size} row{cleanupRowKeys.size !== 1 ? 's are' : ' is'} blank or contain only N/A values. Delete {cleanupRowKeys.size !== 1 ? 'them' : 'it'} before saving?
+            </p>
+            <div className="flex justify-end gap-3 flex-wrap">
+              <button
+                onClick={() => { setShowCleanupDialog(false); setCleanupRowKeys(new Set()) }}
+                className="px-4 py-2 text-sm rounded-xl"
+                style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}>
+                Cancel
+              </button>
+              <button
+                onClick={() => { setShowCleanupDialog(false); setCleanupRowKeys(new Set()); checkDupsAndSave(rows) }}
+                className="px-4 py-2 text-sm rounded-xl"
+                style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}>
+                Keep & Save
+              </button>
+              <button
+                onClick={() => {
+                  const cleaned = rows.filter(r => !cleanupRowKeys.has(r._key))
+                  setRows(cleaned)
+                  setShowCleanupDialog(false)
+                  setCleanupRowKeys(new Set())
+                  checkDupsAndSave(cleaned)
+                }}
+                className="px-4 py-2 text-sm font-semibold rounded-xl text-white"
+                style={{ backgroundColor: 'var(--color-danger)' }}>
+                Delete & Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDupDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.4)' }}>
+          <div className="rounded-2xl p-6 w-full max-w-sm space-y-4" style={{ backgroundColor: 'var(--color-surface)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+            <h3 className="text-base font-semibold" style={{ color: 'var(--color-text-primary)' }}>Duplicate names detected</h3>
+            <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+              {dupRowKeys.size} row{dupRowKeys.size !== 1 ? 's have' : ' has'} a duplicate name (later occurrence{dupRowKeys.size !== 1 ? 's' : ''}). Delete {dupRowKeys.size !== 1 ? 'them' : 'it'} before saving?
+            </p>
+            <div className="flex justify-end gap-3 flex-wrap">
+              <button
+                onClick={() => { setShowDupDialog(false); setDupRowKeys(new Set()); setPendingSaveRows(null) }}
+                className="px-4 py-2 text-sm rounded-xl"
+                style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}>
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const r = pendingSaveRows ?? rows
+                  setShowDupDialog(false); setDupRowKeys(new Set()); setPendingSaveRows(null)
+                  doSave(r)
+                }}
+                className="px-4 py-2 text-sm rounded-xl"
+                style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}>
+                Keep & Save
+              </button>
+              <button
+                onClick={() => {
+                  const cleaned = (pendingSaveRows ?? rows).filter(r => !dupRowKeys.has(r._key))
+                  setRows(cleaned)
+                  setShowDupDialog(false)
+                  setDupRowKeys(new Set())
+                  setPendingSaveRows(null)
+                  doSave(cleaned)
+                }}
+                className="px-4 py-2 text-sm font-semibold rounded-xl text-white"
+                style={{ backgroundColor: 'var(--color-danger)' }}>
+                Delete & Save
               </button>
             </div>
           </div>

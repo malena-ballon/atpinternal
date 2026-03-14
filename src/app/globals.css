@@ -33,3 +33,44 @@ body {
   font-family: var(--font-sans), system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
+
+/* ─── Tiptap / ProseMirror rich text editor ─────────────────────────────── */
+.rich-editor-content {
+  outline: none !important;
+  font-size: 13px;
+  color: #1a1f36;
+  min-height: 60px;
+  line-height: 1.6;
+}
+.rich-editor-content:focus,
+.rich-editor-content:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+.rich-editor-content p { margin: 0 0 4px; }
+.rich-editor-content p:last-child { margin-bottom: 0; }
+.rich-editor-content ul { list-style: disc; padding-left: 20px; margin: 4px 0; }
+.rich-editor-content ol { list-style: decimal; padding-left: 20px; margin: 4px 0; }
+.rich-editor-content li { margin: 2px 0; }
+.rich-editor-content strong { font-weight: 700; }
+.rich-editor-content em { font-style: italic; }
+.rich-editor-content u { text-decoration: underline; }
+
+/* Placeholder */
+.rich-editor-content.ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--color-text-muted);
+  pointer-events: none;
+  float: left;
+  height: 0;
+}
+
+/* Rendered rich content (view mode / public page) */
+.rich-content p { margin: 0 0 4px; }
+.rich-content p:last-child { margin-bottom: 0; }
+.rich-content ul { list-style: disc; padding-left: 20px; margin: 4px 0; }
+.rich-content ol { list-style: decimal; padding-left: 20px; margin: 4px 0; }
+.rich-content li { margin: 2px 0; }
+.rich-content strong { font-weight: 700; }
+.rich-content em { font-style: italic; }
+.rich-content u { text-decoration: underline; }

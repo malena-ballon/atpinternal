@@ -1,10 +1,12 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { format, parseISO, isToday, isBefore, startOfDay, parse, isValid } from 'date-fns'
-import { Plus, Trash2, Loader2, CalendarDays, AlertTriangle } from 'lucide-react'
+import { Plus, Trash2, Loader2, CalendarDays, AlertTriangle, ChevronDown, FileText } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 import Modal from '@/app/dashboard/components/Modal'
+import TimeInput from '@/app/dashboard/components/TimeInput'
+import RichTextEditor from '@/app/dashboard/components/RichTextEditor'
 import type { SessionRow, SessionStatus, ClassRow, TeacherRow, SubjectRow } from '@/types'
 
 // ─── Availability conflict helper ─────────────────────────────────────────────
@@ -27,7 +29,8 @@ interface DraftRow {
   start_time: string
   end_time: string
   teacher_id: string
-  subject_id: string
+  subject_ids: string[]
+  topic: string
   status: SessionStatus
   _statusLocked: boolean
 }
@@ -59,7 +62,7 @@ const STATUS_COLORS: Record<SessionStatus, { backgroundColor: string; color: str
   rescheduled: { backgroundColor: 'rgba(99,102,241,0.12)',  color: '#4F46E5' },
 }
 
-// Column indices: 0=date, 1=start_time, 2=end_time, 3=teacher_id, 4=subject_id, 5=status
+// Column indices: 0=date, 1=start_time, 2=end_time, 3=teacher_id, 4=subject_ids, 5=status
 const COL_COUNT = 6
 
 const cellInput: React.CSSProperties = {
@@ -129,7 +132,7 @@ function parseTime(raw: string): string {
 }
 
 function emptyRow(): DraftRow {
-  return { _key: newKey(), date: '', start_time: '', end_time: '', teacher_id: '', subject_id: '', status: 'scheduled', _statusLocked: false }
+  return { _key: newKey(), date: '', start_time: '', end_time: '', teacher_id: '', subject_ids: [], topic: '', status: 'scheduled', _statusLocked: false }
 }
 
 function getCellText(row: DraftRow, c: number, teachers: TeacherRow[], subjects: SubjectRow[]): string {
@@ -137,7 +140,7 @@ function getCellText(row: DraftRow, c: number, teachers: TeacherRow[], subjects:
   if (c === 1) return row.start_time
   if (c === 2) return row.end_time
   if (c === 3) return teachers.find(t => t.id === row.teacher_id)?.name ?? ''
-  if (c === 4) return subjects.find(s => s.id === row.subject_id)?.name ?? ''
+  if (c === 4) return row.subject_ids.map(id => subjects.find(s => s.id === id)?.name).filter(Boolean).join(', ')
   if (c === 5) return STATUS_OPTIONS.find(o => o.value === row.status)?.label ?? row.status
   return ''
 }
@@ -152,7 +155,11 @@ function applyCellValue(row: DraftRow, c: number, raw: string, teachers: Teacher
   }
   if (c === 4) {
     const match = subjects.find(s => s.name.toLowerCase() === raw.toLowerCase())
-    return match ? { subject_id: match.id } : {}
+    if (!match) return {}
+    const ids = row.subject_ids.includes(match.id)
+      ? row.subject_ids.filter(id => id !== match.id)
+      : [...row.subject_ids, match.id]
+    return { subject_ids: ids }
   }
   if (c === 5) {
     const match = STATUS_OPTIONS.find(o => o.label.toLowerCase() === raw.toLowerCase() || o.value === raw.toLowerCase())
@@ -171,7 +178,12 @@ export default function BulkAddSessionModal({ classes, teachers, onClose, onSave
   const [saveError, setSaveError] = useState('')
   const [sel, setSel] = useState<Sel | null>(null)
   const [showCloseConfirm, setShowCloseConfirm] = useState(false)
+  const [showCleanupDialog, setShowCleanupDialog] = useState(false)
+  const [cleanupRowKeys, setCleanupRowKeys] = useState<Set<string>>(new Set())
   const anchorRef = useRef<{ r: number; c: number } | null>(null)
+  const [openSubjectKey, setOpenSubjectKey] = useState<string | null>(null)
+  const [subjectDropPos, setSubjectDropPos] = useState<{ top: number; left: number } | null>(null)
+  const [expandedTopicKeys, setExpandedTopicKeys] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     if (!selectedClassId) { setSubjects([]); return }
@@ -199,20 +211,23 @@ export default function BulkAddSessionModal({ classes, teachers, onClose, onSave
       }
 
       if (e.key === 'v') {
-        const selSize = (r2 - r1 + 1) * (c2 - c1 + 1)
-        if (selSize <= 1) return
+        const active = document.activeElement
+        if (active instanceof HTMLElement && active.contentEditable === 'true') return
         e.preventDefault()
         navigator.clipboard.readText().then(text => {
           if (!text.trim()) return
-          const pastedRows = text.trim().split('\n').map(r => r.split('\t'))
+          const pastedMatrix = text.trim().split('\n').map(r => r.split('\t'))
           setRows(prev => {
             const next = [...prev]
-            for (let ri = r1; ri <= r2; ri++) {
-              const pRow = pastedRows.length === 1 ? pastedRows[0] : pastedRows[ri - r1] ?? []
+            for (let pr = 0; pr < pastedMatrix.length; pr++) {
+              const ri = r1 + pr
+              while (next.length <= ri) next.push(emptyRow())
+              const pRow = pastedMatrix[pr]
               const row = { ...next[ri] }
-              for (let ci = c1; ci <= c2; ci++) {
-                const pVal = pRow.length === 1 ? pRow[0] : pRow[ci - c1] ?? ''
-                Object.assign(row, applyCellValue(row, ci, pVal.trim(), teachers, subjects))
+              for (let pc = 0; pc < pRow.length; pc++) {
+                const ci = c1 + pc
+                if (ci >= COL_COUNT) break
+                Object.assign(row, applyCellValue(row, ci, pRow[pc].trim(), teachers, subjects))
               }
               if (!row._statusLocked) row.status = autoStatus(row.date, row.start_time, row.end_time)
               next[ri] = row
@@ -267,7 +282,7 @@ export default function BulkAddSessionModal({ classes, teachers, onClose, onSave
     e.preventDefault()
     const text = e.clipboardData.getData('text/plain')
     if (!text.trim()) return
-    const pastedRows = text.trim().split('\n').filter(Boolean)
+    const pastedRows = text.trimEnd().split('\n')
     setRows(prev => {
       const next = [...prev]
       const rowIdx = next.findIndex(r => r._key === rowKey)
@@ -290,7 +305,7 @@ export default function BulkAddSessionModal({ classes, teachers, onClose, onSave
   }
 
   function hasDirtyRows(): boolean {
-    return rows.some(r => r.date || r.start_time || r.end_time || r.teacher_id || r.subject_id)
+    return rows.some(r => r.date || r.start_time || r.end_time || r.teacher_id || r.subject_ids.length > 0)
   }
 
   // Check if row i has a schedule overlap with any other row in this modal
@@ -308,9 +323,20 @@ export default function BulkAddSessionModal({ classes, teachers, onClose, onSave
     if (hasDirtyRows()) { setShowCloseConfirm(true) } else { onClose() }
   }
 
-  async function handleSave() {
+  function handleSave() {
     if (!selectedClassId) { setSaveError('Please select a class first.'); return }
-    const valid = rows.filter(r => r.date && r.start_time && r.end_time)
+    const blankRows = rows.filter(r => !r.date && !r.start_time && !r.end_time && !r.teacher_id && !r.subject_ids.length)
+    if (blankRows.length > 0) {
+      setCleanupRowKeys(new Set(blankRows.map(r => r._key)))
+      setShowCleanupDialog(true)
+      return
+    }
+    doSave(rows)
+  }
+
+  async function doSave(rowsToSave: typeof rows) {
+    if (!selectedClassId) { setSaveError('Please select a class first.'); return }
+    const valid = rowsToSave.filter(r => r.date && r.start_time && r.end_time)
     if (valid.length === 0) { setSaveError('Add at least one row with date and times.'); return }
     setSaving(true); setSaveError('')
     const supabase = createClient()
@@ -320,7 +346,9 @@ export default function BulkAddSessionModal({ classes, teachers, onClose, onSave
         class_id: selectedClassId,
         date: r.date, start_time: r.start_time, end_time: r.end_time,
         teacher_id: r.teacher_id || null,
-        subject_id: r.subject_id || null,
+        subject_ids: r.subject_ids,
+        subject_id: r.subject_ids[0] || null,
+        topic: r.topic || null,
         status: r.status,
       })))
       .select('*, subjects(name), teachers(name), classes(name)')
@@ -361,16 +389,19 @@ export default function BulkAddSessionModal({ classes, teachers, onClose, onSave
             </div>
           )}
 
+          {/* Backdrop for subject dropdowns */}
+          {openSubjectKey && <div className="fixed inset-0 z-[149]" onClick={() => { setOpenSubjectKey(null); setSubjectDropPos(null) }} />}
+
           {/* Table */}
           <div
             className="rounded-xl overflow-x-auto"
             style={{ border: '1px solid var(--color-border)', maxHeight: '400px', overflowY: 'auto' }}
             onMouseDown={() => {/* allow propagation for cell selection */}}
           >
-            <table className="w-full" style={{ minWidth: '820px', userSelect: 'none' }}>
+            <table className="w-full" style={{ minWidth: '920px', userSelect: 'none' }}>
               <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                 <tr style={{ backgroundColor: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)' }}>
-                  {['#', 'Date', 'Day', 'Start', 'End', 'Teacher', 'Subject', 'Status', ''].map(h => (
+                  {['#', 'Date', 'Day', 'Start', 'End', 'Teacher', 'Subject', 'Status', 'Topic', ''].map(h => (
                     <th key={h} className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>
                       {h}
                     </th>
@@ -379,143 +410,188 @@ export default function BulkAddSessionModal({ classes, teachers, onClose, onSave
               </thead>
               <tbody>
                 {rows.map((row, i) => (
-                  <tr key={row._key} style={{ borderBottom: i < rows.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
-                    <td className="px-3 py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)', width: '36px' }}>{i + 1}</td>
+                  <React.Fragment key={row._key}>
+                    <tr style={{ borderBottom: expandedTopicKeys.has(row._key) ? 'none' : (i < rows.length - 1 ? '1px solid var(--color-border)' : 'none') }}>
+                      <td className="px-3 py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)', width: '36px' }}>{i + 1}</td>
 
-                    {/* Date — col 0 */}
-                    <td
-                      className="px-2 py-1.5"
-                      style={cellTdStyle(i, 0, { minWidth: '160px' })}
-                      onMouseDown={e => cellMouseDown(i, 0, e)}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <input
-                          type="text"
-                          value={row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? format(parseISO(row.date), 'M/d/yyyy') : row.date}
-                          placeholder="M/D/YYYY"
-                          onChange={e => {
-                            const parsed = parseDate(e.target.value)
-                            updateRow(row._key, { date: parsed || e.target.value })
-                          }}
-                          onBlur={e => {
-                            const parsed = parseDate(e.target.value)
-                            if (parsed) updateRow(row._key, { date: parsed })
-                          }}
-                          onPaste={e => handleCellPaste(e, row._key, 0)}
-                          style={{ ...cellInput, flex: 1, minWidth: 0, userSelect: 'text' }}
-                        />
-                        <label style={{ cursor: 'pointer', lineHeight: 0, flexShrink: 0 }}>
+                      {/* Date — col 0 */}
+                      <td
+                        className="px-2 py-1.5"
+                        style={cellTdStyle(i, 0, { minWidth: '160px' })}
+                        onMouseDown={e => cellMouseDown(i, 0, e)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                           <input
-                            type="date"
-                            value={row.date}
-                            onChange={e => updateRow(row._key, { date: e.target.value })}
-                            style={{ position: 'absolute', opacity: 0, width: '1px', height: '1px', pointerEvents: 'none' }}
-                            tabIndex={-1}
-                          />
-                          <CalendarDays
-                            size={13}
-                            style={{ color: 'var(--color-text-muted)', display: 'block' }}
-                            onClick={e => {
-                              const label = (e.currentTarget as unknown as HTMLElement).closest('label')
-                              const input = label?.querySelector('input[type="date"]') as HTMLInputElement | null
-                              input?.showPicker?.()
+                            type="text"
+                            value={row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? format(parseISO(row.date), 'M/d/yyyy') : row.date}
+                            placeholder="M/D/YYYY"
+                            onChange={e => {
+                              const parsed = parseDate(e.target.value)
+                              updateRow(row._key, { date: parsed || e.target.value })
                             }}
+                            onBlur={e => {
+                              const parsed = parseDate(e.target.value)
+                              if (parsed) updateRow(row._key, { date: parsed })
+                            }}
+                            onPaste={e => handleCellPaste(e, row._key, 0)}
+                            style={{ ...cellInput, flex: 1, minWidth: 0, userSelect: 'text' }}
                           />
-                        </label>
-                      </div>
-                    </td>
+                          <label style={{ cursor: 'pointer', lineHeight: 0, flexShrink: 0 }}>
+                            <input
+                              type="date"
+                              value={row.date}
+                              onChange={e => updateRow(row._key, { date: e.target.value })}
+                              style={{ position: 'absolute', opacity: 0, width: '1px', height: '1px', pointerEvents: 'none' }}
+                              tabIndex={-1}
+                            />
+                            <CalendarDays
+                              size={13}
+                              style={{ color: 'var(--color-text-muted)', display: 'block' }}
+                              onClick={e => {
+                                const label = (e.currentTarget as unknown as HTMLElement).closest('label')
+                                const input = label?.querySelector('input[type="date"]') as HTMLInputElement | null
+                                input?.showPicker?.()
+                              }}
+                            />
+                          </label>
+                        </div>
+                      </td>
 
-                    {/* Day (auto) */}
-                    <td className="px-2 py-1.5 text-xs" style={{ color: 'var(--color-text-muted)', minWidth: '48px' }}>
-                      {row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? format(parseISO(row.date), 'EEE') : '—'}
-                    </td>
+                      {/* Day (auto) */}
+                      <td className="px-2 py-1.5 text-xs" style={{ color: 'var(--color-text-muted)', minWidth: '48px' }}>
+                        {row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? format(parseISO(row.date), 'EEE') : '—'}
+                      </td>
 
-                    {/* Start — col 1 */}
-                    <td
-                      className="px-2 py-1.5"
-                      style={cellTdStyle(i, 1, { minWidth: '110px' })}
-                      onMouseDown={e => cellMouseDown(i, 1, e)}
-                    >
-                      <input type="time" value={row.start_time}
-                        onChange={e => updateRow(row._key, { start_time: e.target.value })}
-                        onPaste={e => handleCellPaste(e, row._key, 1)}
-                        style={{ ...cellInput, userSelect: 'text' }} />
-                    </td>
+                      {/* Start — col 1 */}
+                      <td
+                        className="px-2 py-1.5"
+                        style={cellTdStyle(i, 1, { minWidth: '130px' })}
+                        onMouseDown={e => cellMouseDown(i, 1, e)}
+                      >
+                        <TimeInput value={row.start_time} onChange={v => updateRow(row._key, { start_time: v })} />
+                      </td>
 
-                    {/* End — col 2 */}
-                    <td
-                      className="px-2 py-1.5"
-                      style={cellTdStyle(i, 2, { minWidth: '110px' })}
-                      onMouseDown={e => cellMouseDown(i, 2, e)}
-                    >
-                      <input type="time" value={row.end_time}
-                        onChange={e => updateRow(row._key, { end_time: e.target.value })}
-                        onPaste={e => handleCellPaste(e, row._key, 2)}
-                        style={{ ...cellInput, userSelect: 'text' }} />
-                    </td>
+                      {/* End — col 2 */}
+                      <td
+                        className="px-2 py-1.5"
+                        style={cellTdStyle(i, 2, { minWidth: '130px' })}
+                        onMouseDown={e => cellMouseDown(i, 2, e)}
+                      >
+                        <TimeInput value={row.end_time} onChange={v => updateRow(row._key, { end_time: v })} />
+                      </td>
 
-                    {/* Teacher — col 3 */}
-                    <td
-                      className="px-2 py-1.5"
-                      style={cellTdStyle(i, 3, { minWidth: '155px' })}
-                      onMouseDown={e => cellMouseDown(i, 3, e)}
-                      onPaste={e => handleCellPaste(e, row._key, 3)}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <select value={row.teacher_id}
-                          onChange={e => updateRow(row._key, { teacher_id: e.target.value })}
-                          style={{ ...cellInput, cursor: 'pointer', flex: 1 }}>
-                          <option value="">— Teacher —</option>
-                          {teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                      {/* Teacher — col 3 */}
+                      <td
+                        className="px-2 py-1.5"
+                        style={cellTdStyle(i, 3, { minWidth: '155px' })}
+                        onMouseDown={e => cellMouseDown(i, 3, e)}
+                        onPaste={e => handleCellPaste(e, row._key, 3)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <select value={row.teacher_id}
+                            onChange={e => updateRow(row._key, { teacher_id: e.target.value })}
+                            style={{ ...cellInput, cursor: 'pointer', flex: 1 }}>
+                            <option value="">— Teacher —</option>
+                            {teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                          </select>
+                          {checkAvailConflict(teachers.find(t => t.id === row.teacher_id), row.date, row.start_time) && (
+                            <span title="Outside teacher's availability" style={{ flexShrink: 0, lineHeight: 0 }}><AlertTriangle size={13} style={{ color: '#D97706' }} /></span>
+                          )}
+                          {rowHasScheduleConflict(i) && (
+                            <span title="Teacher already has an overlapping session" style={{ flexShrink: 0, lineHeight: 0 }}><AlertTriangle size={13} style={{ color: 'var(--color-danger)' }} /></span>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Subject — col 4 — multi-checkbox dropdown */}
+                      <td
+                        className="px-2 py-1.5"
+                        style={cellTdStyle(i, 4, { minWidth: '160px' })}
+                        onMouseDown={e => cellMouseDown(i, 4, e)}
+                        onPaste={e => handleCellPaste(e, row._key, 4)}
+                      >
+                        <button
+                          onClick={e => {
+                            e.stopPropagation()
+                            if (openSubjectKey === row._key) {
+                              setOpenSubjectKey(null); setSubjectDropPos(null)
+                            } else {
+                              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                              setSubjectDropPos({ top: rect.bottom + 4, left: rect.left })
+                              setOpenSubjectKey(row._key)
+                            }
+                          }}
+                          style={{ ...cellInput, textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '13px' }}>
+                            {row.subject_ids.length === 0 ? '— Subject —' : row.subject_ids.map(id => subjects.find(s => s.id === id)?.name).filter(Boolean).join(', ')}
+                          </span>
+                          <ChevronDown size={11} style={{ flexShrink: 0, color: 'var(--color-text-muted)' }} />
+                        </button>
+                        {openSubjectKey === row._key && subjectDropPos && (
+                          <div style={{ position: 'fixed', top: subjectDropPos.top, left: subjectDropPos.left, zIndex: 150, minWidth: '180px', maxHeight: '180px', overflow: 'auto', backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', boxShadow: '0 8px 24px rgba(0,0,0,0.12)' }}>
+                            {subjects.length === 0
+                              ? <p className="px-3 py-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>No subjects for this class</p>
+                              : subjects.map(s => (
+                                <label key={s.id} className="flex items-center gap-2 px-3 py-2 cursor-pointer" style={{ fontSize: '13px' }}>
+                                  <input type="checkbox" checked={row.subject_ids.includes(s.id)}
+                                    onChange={e => { e.stopPropagation(); updateRow(row._key, { subject_ids: row.subject_ids.includes(s.id) ? row.subject_ids.filter(id => id !== s.id) : [...row.subject_ids, s.id] }) }}
+                                    style={{ accentColor: '#0BB5C7' }} />
+                                  <span style={{ color: 'var(--color-text-primary)' }}>{s.name}</span>
+                                </label>
+                              ))
+                            }
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Status — col 5 */}
+                      <td
+                        className="px-2 py-1.5"
+                        style={cellTdStyle(i, 5, { minWidth: '125px' })}
+                        onMouseDown={e => cellMouseDown(i, 5, e)}
+                        onPaste={e => handleCellPaste(e, row._key, 5)}
+                      >
+                        <select value={row.status}
+                          onChange={e => {
+                            const val = e.target.value as SessionStatus
+                            updateRow(row._key, { status: val, _statusLocked: true })
+                          }}
+                          className="text-xs font-semibold rounded-full px-2.5 py-1"
+                          style={{ border: 'none', outline: 'none', cursor: 'pointer', ...STATUS_COLORS[row.status] }}>
+                          {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                         </select>
-                        {checkAvailConflict(teachers.find(t => t.id === row.teacher_id), row.date, row.start_time) && (
-                          <span title="Outside teacher's availability" style={{ flexShrink: 0, lineHeight: 0 }}><AlertTriangle size={13} style={{ color: '#D97706' }} /></span>
-                        )}
-                        {rowHasScheduleConflict(i) && (
-                          <span title="Teacher already has an overlapping session" style={{ flexShrink: 0, lineHeight: 0 }}><AlertTriangle size={13} style={{ color: 'var(--color-danger)' }} /></span>
-                        )}
-                      </div>
-                    </td>
+                      </td>
 
-                    {/* Subject — col 4 */}
-                    <td
-                      className="px-2 py-1.5"
-                      style={cellTdStyle(i, 4, { minWidth: '140px' })}
-                      onMouseDown={e => cellMouseDown(i, 4, e)}
-                      onPaste={e => handleCellPaste(e, row._key, 4)}
-                    >
-                      <select value={row.subject_id}
-                        onChange={e => updateRow(row._key, { subject_id: e.target.value })}
-                        style={{ ...cellInput, cursor: 'pointer' }}>
-                        <option value="">— Subject —</option>
-                        {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                      </select>
-                    </td>
+                      {/* Topic — expand button */}
+                      <td className="px-2 py-1.5" style={{ width: '80px' }}>
+                        <button
+                          onClick={e => { e.stopPropagation(); setExpandedTopicKeys(prev => { const n = new Set(prev); n.has(row._key) ? n.delete(row._key) : n.add(row._key); return n }) }}
+                          className="flex items-center gap-1 px-2 py-1 rounded text-xs"
+                          style={{ color: row.topic ? '#0BB5C7' : 'var(--color-text-muted)', backgroundColor: row.topic ? 'rgba(11,181,199,0.08)' : 'transparent', border: row.topic ? '1px solid rgba(11,181,199,0.2)' : '1px solid transparent' }}>
+                          <FileText size={12} />
+                          {row.topic ? 'Edit' : 'Add'}
+                        </button>
+                      </td>
 
-                    {/* Status — col 5 */}
-                    <td
-                      className="px-2 py-1.5"
-                      style={cellTdStyle(i, 5, { minWidth: '125px' })}
-                      onMouseDown={e => cellMouseDown(i, 5, e)}
-                      onPaste={e => handleCellPaste(e, row._key, 5)}
-                    >
-                      <select value={row.status}
-                        onChange={e => {
-                          const val = e.target.value as SessionStatus
-                          updateRow(row._key, { status: val, _statusLocked: true })
-                        }}
-                        className="text-xs font-semibold rounded-full px-2.5 py-1"
-                        style={{ border: 'none', outline: 'none', cursor: 'pointer', ...STATUS_COLORS[row.status] }}>
-                        {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                      </select>
-                    </td>
-
-                    <td className="px-2 py-1.5" style={{ width: '40px' }}>
-                      <button onClick={() => removeRow(row._key)} className="w-6 h-6 flex items-center justify-center rounded" style={{ color: 'var(--color-danger)' }}>
-                        <Trash2 size={12} />
-                      </button>
-                    </td>
-                  </tr>
+                      {/* Delete */}
+                      <td className="px-2 py-1.5" style={{ width: '40px' }}>
+                        <button onClick={() => removeRow(row._key)} className="w-6 h-6 flex items-center justify-center rounded" style={{ color: 'var(--color-danger)' }}>
+                          <Trash2 size={12} />
+                        </button>
+                      </td>
+                    </tr>
+                    {expandedTopicKeys.has(row._key) && (
+                      <tr style={{ borderBottom: i < rows.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
+                        <td colSpan={10} className="px-3 pb-2 pt-1">
+                          <RichTextEditor
+                            value={row.topic}
+                            onChange={v => setRows(prev => prev.map(r => r._key === row._key ? { ...r, topic: v } : r))}
+                            placeholder="Enter topic details…"
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>
@@ -538,6 +614,43 @@ export default function BulkAddSessionModal({ classes, teachers, onClose, onSave
           </div>
         </div>
       </Modal>
+
+      {showCleanupDialog && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="rounded-2xl p-6 w-full max-w-sm space-y-4" style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+            <h3 className="text-base font-semibold" style={{ color: 'var(--color-text-primary)' }}>Blank rows detected</h3>
+            <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+              {cleanupRowKeys.size} row{cleanupRowKeys.size !== 1 ? 's are' : ' is'} completely empty. Delete {cleanupRowKeys.size !== 1 ? 'them' : 'it'} before saving?
+            </p>
+            <div className="flex justify-end gap-3 flex-wrap pt-1">
+              <button
+                onClick={() => { setShowCleanupDialog(false); setCleanupRowKeys(new Set()) }}
+                className="px-4 py-2 text-sm rounded-xl"
+                style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}>
+                Cancel
+              </button>
+              <button
+                onClick={() => { setShowCleanupDialog(false); setCleanupRowKeys(new Set()); doSave(rows) }}
+                className="px-4 py-2 text-sm rounded-xl"
+                style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}>
+                Keep & Save
+              </button>
+              <button
+                onClick={() => {
+                  const cleaned = rows.filter(r => !cleanupRowKeys.has(r._key))
+                  setRows(cleaned)
+                  setShowCleanupDialog(false)
+                  setCleanupRowKeys(new Set())
+                  doSave(cleaned)
+                }}
+                className="px-4 py-2 text-sm font-semibold rounded-xl text-white"
+                style={{ backgroundColor: 'var(--color-danger)' }}>
+                Delete & Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Close confirmation dialog */}
       {showCloseConfirm && (

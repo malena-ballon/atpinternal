@@ -1,12 +1,14 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { format, parseISO, isToday, isBefore, startOfDay, parse, isValid } from 'date-fns'
-import { Pencil, Trash2, Loader2, Check, CalendarDays, Plus, AlertTriangle, Download } from 'lucide-react'
+import { Pencil, Trash2, Loader2, Check, CalendarDays, Plus, AlertTriangle, Download, ChevronDown, FileText } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 import { logActivity } from '@/app/actions'
 import type { SessionRow, SessionStatus, ClassRow, TeacherRow, SubjectRow } from '@/types'
 import StatusBadge from '@/app/dashboard/components/StatusBadge'
+import TimeInput from '@/app/dashboard/components/TimeInput'
+import RichTextEditor from '@/app/dashboard/components/RichTextEditor'
 
 interface Sel { r1: number; r2: number; c1: number; c2: number }
 
@@ -110,7 +112,7 @@ interface DraftRow {
   start_time: string
   end_time: string
   teacher_id: string
-  subject_id: string
+  subject_ids: string[]
   topic: string
   status: SessionStatus
   student_count: number
@@ -130,7 +132,7 @@ function sessionToRow(s: SessionRow): DraftRow {
     start_time: s.start_time.slice(0, 5),
     end_time: s.end_time.slice(0, 5),
     teacher_id: s.teacher_id ?? '',
-    subject_id: s.subject_id ?? '',
+    subject_ids: s.subject_ids?.length ? s.subject_ids : s.subject_id ? [s.subject_id] : [],
     topic: s.topic ?? '',
     status: s.status as SessionStatus,
     student_count: s.student_count ?? 0,
@@ -142,7 +144,7 @@ function sessionToRow(s: SessionRow): DraftRow {
 function blankRow(class_id = ''): DraftRow {
   return {
     _key: newKey(), class_id, date: '', start_time: '', end_time: '',
-    teacher_id: '', subject_id: '', topic: '', status: 'scheduled',
+    teacher_id: '', subject_ids: [], topic: '', status: 'scheduled',
     student_count: 0, _statusLocked: false, _isNew: true, _dirty: true,
   }
 }
@@ -180,9 +182,22 @@ export default function ScheduleTable({
   const [saveError, setSaveError] = useState('')
   const [saved, setSaved] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showCleanupDialog, setShowCleanupDialog] = useState(false)
+  const [cleanupRowKeys, setCleanupRowKeys] = useState<Set<string>>(new Set())
   const savedSnapshot = useRef<DraftRow[]>([])
   const [sel, setSel] = useState<Sel | null>(null)
   const anchorRef = useRef<{ r: number; c: number } | null>(null)
+  const [openSubjectKey, setOpenSubjectKey] = useState<string | null>(null)
+  const [subjectDropPos, setSubjectDropPos] = useState<{ top: number; left: number } | null>(null)
+  const [expandedTopicKeys, setExpandedTopicKeys] = useState<Set<string>>(new Set())
+
+  function toggleTopicExpand(key: string) {
+    setExpandedTopicKeys(prev => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
+  }
 
   function getEditRowCell(row: DraftRow, c: number): string {
     if (c === 0) return row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? format(parseISO(row.date), 'M/d/yyyy') : row.date
@@ -191,7 +206,10 @@ export default function ScheduleTable({
     if (c === 3) return row.end_time
     if (c === 4) return classes.find(cl => cl.id === row.class_id)?.name ?? '—'
     if (c === 5) return teachers.find(t => t.id === row.teacher_id)?.name ?? '—'
-    if (c === 6) return (subjectsByClass.get(row.class_id) ?? []).find(s => s.id === row.subject_id)?.name ?? '—'
+    if (c === 6) {
+      const subs = subjectsByClass.get(row.class_id) ?? []
+      return row.subject_ids.map(id => subs.find(s => s.id === id)?.name ?? id).join(', ') || '—'
+    }
     if (c === 7) return row.topic
     if (c === 8) return STATUS_OPTIONS.find(o => o.value === row.status)?.label ?? row.status
     return ''
@@ -206,7 +224,7 @@ export default function ScheduleTable({
     if (c === 4) {
       if (!row._isNew) return {}
       const match = classes.find(cl => cl.name.toLowerCase() === v.toLowerCase())
-      return match ? { class_id: match.id, subject_id: '' } : {}
+      return match ? { class_id: match.id, subject_ids: [] } : {}
     }
     if (c === 5) {
       const match = teachers.find(t => t.name.toLowerCase() === v.toLowerCase())
@@ -215,7 +233,11 @@ export default function ScheduleTable({
     if (c === 6) {
       const subs = subjectsByClass.get(row.class_id) ?? []
       const match = subs.find(s => s.name.toLowerCase() === v.toLowerCase())
-      return match ? { subject_id: match.id } : {}
+      if (!match) return {}
+      const ids = row.subject_ids.includes(match.id)
+        ? row.subject_ids.filter(id => id !== match.id)
+        : [...row.subject_ids, match.id]
+      return { subject_ids: ids }
     }
     if (c === 7) return { topic: v }
     if (c === 8) {
@@ -253,6 +275,8 @@ export default function ScheduleTable({
 
       if (e.key === 'v' && editMode) {
         if (hasTextSel) return
+        const active = document.activeElement
+        if (active instanceof HTMLElement && active.contentEditable === 'true') return
         e.preventDefault()
         navigator.clipboard.readText().then(text => {
           if (!text.trim()) return
@@ -365,11 +389,21 @@ export default function ScheduleTable({
     if (id) setDeletedIds(prev => new Set([...prev, id]))
   }
 
-  async function handleSave() {
+  function handleSave() {
+    const blankRows = rows.filter(r => r._isNew && !r.date && !r.start_time && !r.end_time && !r.teacher_id && !r.subject_ids.length)
+    if (blankRows.length > 0) {
+      setCleanupRowKeys(new Set(blankRows.map(r => r._key)))
+      setShowCleanupDialog(true)
+      return
+    }
+    doSave(rows)
+  }
+
+  async function doSave(rowsToSave: typeof rows) {
     setSaving(true); setSaveError('')
     const supabase = createClient()
-    const toInsert = rows.filter(r => r._isNew && r.date && r.start_time && r.end_time)
-    const toUpdate = rows.filter(r => !r._isNew && r._dirty && r.id)
+    const toInsert = rowsToSave.filter(r => r._isNew && r.date && r.start_time && r.end_time)
+    const toUpdate = rowsToSave.filter(r => !r._isNew && r._dirty && r.id)
 
     try {
       if (deletedIds.size > 0) {
@@ -381,7 +415,9 @@ export default function ScheduleTable({
         const { error } = await supabase.from('sessions').insert(
           toInsert.map(r => ({
             class_id: r.class_id, date: r.date, start_time: r.start_time, end_time: r.end_time,
-            teacher_id: r.teacher_id || null, subject_id: r.subject_id || null,
+            teacher_id: r.teacher_id || null,
+            subject_ids: r.subject_ids,
+            subject_id: r.subject_ids[0] || null,
             topic: r.topic || null, status: r.status,
           }))
         )
@@ -391,7 +427,9 @@ export default function ScheduleTable({
       for (const r of toUpdate) {
         const { error } = await supabase.from('sessions').update({
           date: r.date, start_time: r.start_time, end_time: r.end_time,
-          teacher_id: r.teacher_id || null, subject_id: r.subject_id || null,
+          teacher_id: r.teacher_id || null,
+          subject_ids: r.subject_ids,
+          subject_id: r.subject_ids[0] || null,
           topic: r.topic || null, status: r.status,
         }).eq('id', r.id!)
         if (error) throw error
@@ -401,7 +439,7 @@ export default function ScheduleTable({
       const changedIds = toUpdate.map(r => r.id!)
       if (changedIds.length > 0) {
         const { data: fresh } = await supabase.from('sessions')
-          .select('id, date, start_time, end_time, status, student_count, notes, zoom_link, topic, class_id, subject_id, teacher_id, subjects(name), teachers(name), classes(name)')
+          .select('id, date, start_time, end_time, status, student_count, notes, zoom_link, topic, class_id, subject_id, subject_ids, teacher_id, subjects(name), teachers(name), classes(name)')
           .in('id', changedIds)
         if (fresh) onSessionsChanged(fresh as unknown as SessionRow[])
       }
@@ -409,7 +447,7 @@ export default function ScheduleTable({
       // Reload all sessions if there were inserts or deletes
       if (toInsert.length > 0 || deletedIds.size > 0) {
         const { data: allFresh } = await supabase.from('sessions')
-          .select('id, date, start_time, end_time, status, student_count, notes, zoom_link, topic, class_id, subject_id, teacher_id, subjects(name), teachers(name), classes(name)')
+          .select('id, date, start_time, end_time, status, student_count, notes, zoom_link, topic, class_id, subject_id, subject_ids, teacher_id, subjects(name), teachers(name), classes(name)')
           .order('date', { ascending: false }).order('start_time')
         if (allFresh) onSessionsChanged(allFresh as unknown as SessionRow[])
       }
@@ -443,7 +481,7 @@ export default function ScheduleTable({
     try {
       const { pdf } = await import('@react-pdf/renderer')
       const { default: MasterSchedulePDF } = await import('./MasterSchedulePDF')
-      const React = (await import('react')).default
+      const ReactLib = (await import('react')).default
       const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
       const pdfRows = sessions.map((s, i) => ({
         index: i + 1,
@@ -458,7 +496,7 @@ export default function ScheduleTable({
         students: s.student_count > 0 ? String(s.student_count) : '',
       }))
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const blob = await pdf(React.createElement(MasterSchedulePDF, { rows: pdfRows, generatedDate: today }) as any).toBlob()
+      const blob = await pdf(ReactLib.createElement(MasterSchedulePDF, { rows: pdfRows, generatedDate: today }) as any).toBlob()
       const date = new Date().toISOString().split('T')[0]
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -546,6 +584,43 @@ export default function ScheduleTable({
         </div>
       )}
 
+      {showCleanupDialog && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="rounded-2xl p-6 w-full max-w-sm space-y-4" style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+            <h3 className="text-base font-semibold" style={{ color: 'var(--color-text-primary)' }}>Blank rows detected</h3>
+            <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+              {cleanupRowKeys.size} new row{cleanupRowKeys.size !== 1 ? 's are' : ' is'} completely empty. Delete {cleanupRowKeys.size !== 1 ? 'them' : 'it'} before saving?
+            </p>
+            <div className="flex justify-end gap-3 flex-wrap pt-1">
+              <button
+                onClick={() => { setShowCleanupDialog(false); setCleanupRowKeys(new Set()) }}
+                className="px-4 py-2 text-sm rounded-xl"
+                style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}>
+                Cancel
+              </button>
+              <button
+                onClick={() => { setShowCleanupDialog(false); setCleanupRowKeys(new Set()); doSave(rows) }}
+                className="px-4 py-2 text-sm rounded-xl"
+                style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}>
+                Keep & Save
+              </button>
+              <button
+                onClick={() => {
+                  const cleaned = rows.filter(r => !cleanupRowKeys.has(r._key))
+                  setRows(cleaned)
+                  setShowCleanupDialog(false)
+                  setCleanupRowKeys(new Set())
+                  doSave(cleaned)
+                }}
+                className="px-4 py-2 text-sm font-semibold rounded-xl text-white"
+                style={{ backgroundColor: 'var(--color-danger)' }}>
+                Delete & Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Delete confirmation dialog */}
       {showDeleteConfirm && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
@@ -629,199 +704,266 @@ export default function ScheduleTable({
               </thead>
               <tbody>
                 {sessions.map((s, i) => (
-                  <tr
-                    key={s.id}
-                    style={{
-                      borderBottom: i < sessions.length - 1 ? '1px solid var(--color-border)' : 'none',
-                      backgroundColor: selected.has(s.id) ? 'rgba(61,212,230,0.03)' : 'transparent',
-                    }}
-                  >
-                    <td className="px-4 py-3 w-10">
-                      <input type="checkbox" checked={selected.has(s.id)} onChange={() => onSelectToggle(s.id)}
-                        className="rounded" style={{ accentColor: '#0BB5C7' }} />
-                    </td>
-                    <td className="px-4 py-3 text-sm font-medium" style={{ color: 'var(--color-text-primary)', cursor: 'cell', ...cs(i, 0) }}
-                      onMouseDown={e => cellMouseDown(i, 0, e)}>
-                      {format(parseISO(s.date), 'MMM d, yyyy')}
-                    </td>
-                    <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)', cursor: 'cell', ...cs(i, 1) }}
-                      onMouseDown={e => cellMouseDown(i, 1, e)}>
-                      {format(parseISO(s.date), 'EEE')}
-                    </td>
-                    <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)', cursor: 'cell', ...cs(i, 2) }}
-                      onMouseDown={e => cellMouseDown(i, 2, e)}>
-                      {fmt12(s.start_time)} – {fmt12(s.end_time)}
-                    </td>
-                    <td className="px-4 py-3 text-sm font-medium" style={{ color: 'var(--color-text-primary)', cursor: 'cell', ...cs(i, 3) }}
-                      onMouseDown={e => cellMouseDown(i, 3, e)}>
-                      {s.subjects?.name ?? '—'}
-                    </td>
-                    <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)', cursor: 'cell', ...cs(i, 4) }}
-                      onMouseDown={e => cellMouseDown(i, 4, e)}>
-                      {s.topic ?? '—'}
-                    </td>
-                    <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)', cursor: 'cell', ...cs(i, 5) }}
-                      onMouseDown={e => cellMouseDown(i, 5, e)}>
-                      {s.classes?.name ?? '—'}
-                    </td>
-                    <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)', cursor: 'cell', ...cs(i, 6) }}
-                      onMouseDown={e => cellMouseDown(i, 6, e)}>
-                      {s.teachers?.name ?? '—'}
-                    </td>
-                    <td className="px-4 py-3" style={{ cursor: 'cell', ...cs(i, 7) }}
-                      onMouseDown={e => cellMouseDown(i, 7, e)}>
-                      <StatusBadge status={s.status as SessionStatus} size="sm" />
-                    </td>
-                    <td className="px-4 py-3 text-sm text-center" style={{ color: 'var(--color-text-muted)', cursor: 'cell', ...cs(i, 8) }}
-                      onMouseDown={e => cellMouseDown(i, 8, e)}>
-                      {s.student_count > 0 ? s.student_count : '—'}
-                    </td>
-                  </tr>
+                  <React.Fragment key={s.id}>
+                    <tr
+                      style={{
+                        borderBottom: expandedTopicKeys.has(s.id) ? 'none' : (i < sessions.length - 1 ? '1px solid var(--color-border)' : 'none'),
+                        backgroundColor: selected.has(s.id) ? 'rgba(61,212,230,0.03)' : 'transparent',
+                      }}
+                    >
+                      <td className="px-4 py-3 w-10">
+                        <input type="checkbox" checked={selected.has(s.id)} onChange={() => onSelectToggle(s.id)}
+                          className="rounded" style={{ accentColor: '#0BB5C7' }} />
+                      </td>
+                      <td className="px-4 py-3 text-sm font-medium" style={{ color: 'var(--color-text-primary)', cursor: 'cell', ...cs(i, 0) }}
+                        onMouseDown={e => cellMouseDown(i, 0, e)}>
+                        {format(parseISO(s.date), 'MMM d, yyyy')}
+                      </td>
+                      <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)', cursor: 'cell', ...cs(i, 1) }}
+                        onMouseDown={e => cellMouseDown(i, 1, e)}>
+                        {format(parseISO(s.date), 'EEE')}
+                      </td>
+                      <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)', cursor: 'cell', ...cs(i, 2) }}
+                        onMouseDown={e => cellMouseDown(i, 2, e)}>
+                        {fmt12(s.start_time)} – {fmt12(s.end_time)}
+                      </td>
+                      <td className="px-4 py-3" style={{ cursor: 'cell', ...cs(i, 3) }}
+                        onMouseDown={e => cellMouseDown(i, 3, e)}>
+                        {(() => {
+                          const classSubjects = subjectsByClass.get(s.class_id) ?? []
+                          const ids = s.subject_ids?.length ? s.subject_ids : s.subject_id ? [s.subject_id] : []
+                          const names = ids.map(id => classSubjects.find(sub => sub.id === id)?.name ?? s.subjects?.name).filter(Boolean) as string[]
+                          return names.length > 0
+                            ? <div className="flex flex-wrap gap-1">{names.map((n, ni) => <span key={ni} className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: 'rgba(11,181,199,0.1)', color: '#0BB5C7' }}>{n}</span>)}</div>
+                            : <span style={{ color: 'var(--color-text-muted)' }}>—</span>
+                        })()}
+                      </td>
+                      <td className="px-4 py-3" style={{ cursor: 'cell', ...cs(i, 4) }}
+                        onMouseDown={e => cellMouseDown(i, 4, e)}>
+                        {s.topic
+                          ? <button onClick={e => { e.stopPropagation(); toggleTopicExpand(s.id) }} className="flex items-center gap-1 text-xs" style={{ color: '#0BB5C7' }}>
+                              <FileText size={12} />
+                              {expandedTopicKeys.has(s.id) ? 'Hide' : 'View'}
+                            </button>
+                          : <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
+                      </td>
+                      <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)', cursor: 'cell', ...cs(i, 5) }}
+                        onMouseDown={e => cellMouseDown(i, 5, e)}>
+                        {s.classes?.name ?? '—'}
+                      </td>
+                      <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)', cursor: 'cell', ...cs(i, 6) }}
+                        onMouseDown={e => cellMouseDown(i, 6, e)}>
+                        {s.teachers?.name ?? '—'}
+                      </td>
+                      <td className="px-4 py-3" style={{ cursor: 'cell', ...cs(i, 7) }}
+                        onMouseDown={e => cellMouseDown(i, 7, e)}>
+                        <StatusBadge status={s.status as SessionStatus} size="sm" />
+                      </td>
+                      <td className="px-4 py-3 text-sm text-center" style={{ color: 'var(--color-text-muted)', cursor: 'cell', ...cs(i, 8) }}
+                        onMouseDown={e => cellMouseDown(i, 8, e)}>
+                        {s.student_count > 0 ? s.student_count : '—'}
+                      </td>
+                    </tr>
+                    {expandedTopicKeys.has(s.id) && (
+                      <tr style={{ borderBottom: i < sessions.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
+                        <td colSpan={10} className="px-4 pt-0 pb-3">
+                          <div className="rounded-lg p-3 text-sm" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
+                            <p className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--color-text-muted)' }}>Topic</p>
+                            <div className="rich-content text-sm" style={{ color: 'var(--color-text-primary)' }} dangerouslySetInnerHTML={{ __html: s.topic ?? '' }} />
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>
           )
         ) : (
           // ── EDIT MODE ──────────────────────────────────────────────────────
-          <table className="w-full" style={{ minWidth: '1100px' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg)' }}>
-                {['#', 'Date', 'Day', 'Start', 'End', 'Class', 'Teacher', 'Subject', 'Topic', 'Status', ''].map(h => (
-                  <th key={h} className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider"
-                    style={{ color: 'var(--color-text-muted)' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={11} className="px-4 py-12 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>
-                    No rows. Click &quot;Add row&quot; to begin.
-                  </td>
+          <>
+            {openSubjectKey && (
+              <div className="fixed inset-0 z-[149]" onClick={() => { setOpenSubjectKey(null); setSubjectDropPos(null) }} />
+            )}
+            <table className="w-full" style={{ minWidth: '1100px' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg)' }}>
+                  {['#', 'Date', 'Day', 'Start', 'End', 'Class', 'Teacher', 'Subject', 'Topic', 'Status', ''].map(h => (
+                    <th key={h} className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider"
+                      style={{ color: 'var(--color-text-muted)' }}>{h}</th>
+                  ))}
                 </tr>
-              )}
-              {rows.map((row, i) => {
-                const rowSubjects = subjectsByClass.get(row.class_id) ?? []
-                return (
-                  <tr key={row._key} style={{ borderBottom: i < rows.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
-                    {/* # */}
-                    <td className="px-3 py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)', width: '36px' }}>{i + 1}</td>
-
-                    {/* Date */}
-                    <td className="px-2 py-1.5" style={{ minWidth: '160px', ...cs(i, 0) }}
-                      onMouseDown={e => cellMouseDown(i, 0, e)}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <input type="text"
-                          value={row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? format(parseISO(row.date), 'M/d/yyyy') : row.date}
-                          placeholder="M/D/YYYY"
-                          onChange={e => { const p = parseDate(e.target.value); updateRow(row._key, { date: p || e.target.value }) }}
-                          onBlur={e => { const p = parseDate(e.target.value); if (p) updateRow(row._key, { date: p }) }}
-                          style={{ ...cellInput, flex: 1, minWidth: 0 }} />
-                        <label style={{ cursor: 'pointer', lineHeight: 0, flexShrink: 0, position: 'relative' }}>
-                          <input type="date" value={row.date} onChange={e => updateRow(row._key, { date: e.target.value })}
-                            style={{ position: 'absolute', opacity: 0, width: '1px', height: '1px', pointerEvents: 'none' }} tabIndex={-1} />
-                          <CalendarDays size={13} style={{ color: 'var(--color-text-muted)', display: 'block' }}
-                            onClick={e => {
-                              const inp = (e.currentTarget as unknown as HTMLElement).closest('label')?.querySelector('input[type="date"]') as HTMLInputElement | null
-                              inp?.showPicker?.()
-                            }} />
-                        </label>
-                      </div>
-                    </td>
-
-                    {/* Day (auto) */}
-                    <td className="px-2 py-1.5 text-xs" style={{ color: 'var(--color-text-muted)', minWidth: '48px', cursor: 'cell', ...cs(i, 1) }}
-                      onMouseDown={e => cellMouseDown(i, 1, e)}>
-                      {row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? format(parseISO(row.date), 'EEE') : '—'}
-                    </td>
-
-                    {/* Start */}
-                    <td className="px-2 py-1.5" style={{ minWidth: '110px', ...cs(i, 2) }}
-                      onMouseDown={e => cellMouseDown(i, 2, e)}>
-                      <input type="time" value={row.start_time}
-                        onChange={e => updateRow(row._key, { start_time: e.target.value })}
-                        style={cellInput} />
-                    </td>
-
-                    {/* End */}
-                    <td className="px-2 py-1.5" style={{ minWidth: '110px', ...cs(i, 3) }}
-                      onMouseDown={e => cellMouseDown(i, 3, e)}>
-                      <input type="time" value={row.end_time}
-                        onChange={e => updateRow(row._key, { end_time: e.target.value })}
-                        style={cellInput} />
-                    </td>
-
-                    {/* Class (read-only label for existing, dropdown for new) */}
-                    <td className="px-2 py-1.5" style={{ minWidth: '150px', ...cs(i, 4) }}
-                      onMouseDown={e => cellMouseDown(i, 4, e)}>
-                      {row._isNew ? (
-                        <select value={row.class_id}
-                          onChange={e => updateRow(row._key, { class_id: e.target.value, subject_id: '' })}
-                          style={{ ...cellInput, cursor: 'pointer' }}>
-                          <option value="">— Class —</option>
-                          {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                        </select>
-                      ) : (
-                        <span className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                          {classes.find(c => c.id === row.class_id)?.name ?? '—'}
-                        </span>
-                      )}
-                    </td>
-
-                    {/* Teacher */}
-<td className="px-2 py-1.5" style={{ minWidth: '150px', ...cs(i, 5) }}
-                      onMouseDown={e => cellMouseDown(i, 5, e)}>
-                      <select value={row.teacher_id}
-                        onChange={e => updateRow(row._key, { teacher_id: e.target.value })}
-                        style={{ ...cellInput, cursor: 'pointer' }}>
-                        <option value="">— Teacher —</option>
-                        {teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                      </select>
-                    </td>
-
-                    {/* Subject (filtered by class) */}
-                    <td className="px-2 py-1.5" style={{ minWidth: '150px', ...cs(i, 6) }}
-                      onMouseDown={e => cellMouseDown(i, 6, e)}>
-                      <select value={row.subject_id}
-                        onChange={e => updateRow(row._key, { subject_id: e.target.value })}
-                        style={{ ...cellInput, cursor: 'pointer' }}>
-                        <option value="">— Subject —</option>
-                        {rowSubjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                      </select>
-                    </td>
-
-                    {/* Topic */}
-                    <td className="px-2 py-1.5" style={{ minWidth: '160px', ...cs(i, 7) }}
-                      onMouseDown={e => cellMouseDown(i, 7, e)}>
-                      <input type="text" value={row.topic} placeholder="Topic…"
-                        onChange={e => updateRow(row._key, { topic: e.target.value })}
-                        style={cellInput} />
-                    </td>
-
-                    {/* Status */}
-                    <td className="px-2 py-1.5" style={{ minWidth: '130px', ...cs(i, 8) }}
-                      onMouseDown={e => cellMouseDown(i, 8, e)}>
-                      <select value={row.status}
-                        onChange={e => { const v = e.target.value as SessionStatus; updateRow(row._key, { status: v, _statusLocked: true }) }}
-                        className="text-xs font-semibold rounded-full px-2.5 py-1"
-                        style={{ border: 'none', outline: 'none', cursor: 'pointer', ...STATUS_COLORS[row.status] }}>
-                        {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                      </select>
-                    </td>
-
-                    {/* Delete */}
-                    <td className="px-2 py-1.5" style={{ width: '40px' }}>
-                      <button onClick={() => removeRow(row._key, row.id)}
-                        className="w-6 h-6 flex items-center justify-center rounded"
-                        style={{ color: 'var(--color-danger)' }}>
-                        <Trash2 size={12} />
-                      </button>
+              </thead>
+              <tbody>
+                {rows.length === 0 && (
+                  <tr>
+                    <td colSpan={11} className="px-4 py-12 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>
+                      No rows. Click &quot;Add row&quot; to begin.
                     </td>
                   </tr>
-                )
-              })}
-            </tbody>
-          </table>
+                )}
+                {rows.map((row, i) => {
+                  const rowSubjects = subjectsByClass.get(row.class_id) ?? []
+                  return (
+                    <React.Fragment key={row._key}>
+                      <tr style={{ borderBottom: expandedTopicKeys.has(row._key) ? 'none' : (i < rows.length - 1 ? '1px solid var(--color-border)' : 'none') }}>
+                        {/* # */}
+                        <td className="px-3 py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)', width: '36px' }}>{i + 1}</td>
+
+                        {/* Date */}
+                        <td className="px-2 py-1.5" style={{ minWidth: '160px', ...cs(i, 0) }}
+                          onMouseDown={e => cellMouseDown(i, 0, e)}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <input type="text"
+                              value={row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? format(parseISO(row.date), 'M/d/yyyy') : row.date}
+                              placeholder="M/D/YYYY"
+                              onChange={e => { const p = parseDate(e.target.value); updateRow(row._key, { date: p || e.target.value }) }}
+                              onBlur={e => { const p = parseDate(e.target.value); if (p) updateRow(row._key, { date: p }) }}
+                              style={{ ...cellInput, flex: 1, minWidth: 0 }} />
+                            <label style={{ cursor: 'pointer', lineHeight: 0, flexShrink: 0, position: 'relative' }}>
+                              <input type="date" value={row.date} onChange={e => updateRow(row._key, { date: e.target.value })}
+                                style={{ position: 'absolute', opacity: 0, width: '1px', height: '1px', pointerEvents: 'none' }} tabIndex={-1} />
+                              <CalendarDays size={13} style={{ color: 'var(--color-text-muted)', display: 'block' }}
+                                onClick={e => {
+                                  const inp = (e.currentTarget as unknown as HTMLElement).closest('label')?.querySelector('input[type="date"]') as HTMLInputElement | null
+                                  inp?.showPicker?.()
+                                }} />
+                            </label>
+                          </div>
+                        </td>
+
+                        {/* Day (auto) */}
+                        <td className="px-2 py-1.5 text-xs" style={{ color: 'var(--color-text-muted)', minWidth: '48px', cursor: 'cell', ...cs(i, 1) }}
+                          onMouseDown={e => cellMouseDown(i, 1, e)}>
+                          {row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? format(parseISO(row.date), 'EEE') : '—'}
+                        </td>
+
+                        {/* Start */}
+                        <td className="px-2 py-1.5" style={{ minWidth: '130px', ...cs(i, 2) }}
+                          onMouseDown={e => cellMouseDown(i, 2, e)}>
+                          <TimeInput value={row.start_time} onChange={v => updateRow(row._key, { start_time: v })} />
+                        </td>
+
+                        {/* End */}
+                        <td className="px-2 py-1.5" style={{ minWidth: '130px', ...cs(i, 3) }}
+                          onMouseDown={e => cellMouseDown(i, 3, e)}>
+                          <TimeInput value={row.end_time} onChange={v => updateRow(row._key, { end_time: v })} />
+                        </td>
+
+                        {/* Class (read-only label for existing, dropdown for new) */}
+                        <td className="px-2 py-1.5" style={{ minWidth: '150px', ...cs(i, 4) }}
+                          onMouseDown={e => cellMouseDown(i, 4, e)}>
+                          {row._isNew ? (
+                            <select value={row.class_id}
+                              onChange={e => updateRow(row._key, { class_id: e.target.value, subject_ids: [] })}
+                              style={{ ...cellInput, cursor: 'pointer' }}>
+                              <option value="">— Class —</option>
+                              {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            </select>
+                          ) : (
+                            <span className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                              {classes.find(c => c.id === row.class_id)?.name ?? '—'}
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Teacher */}
+                        <td className="px-2 py-1.5" style={{ minWidth: '150px', ...cs(i, 5) }}
+                          onMouseDown={e => cellMouseDown(i, 5, e)}>
+                          <select value={row.teacher_id}
+                            onChange={e => updateRow(row._key, { teacher_id: e.target.value })}
+                            style={{ ...cellInput, cursor: 'pointer' }}>
+                            <option value="">— Teacher —</option>
+                            {teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                          </select>
+                        </td>
+
+                        {/* Subject (filtered by class) — multi-checkbox dropdown */}
+                        <td className="px-2 py-1.5" style={{ minWidth: '160px', ...cs(i, 6) }}
+                          onMouseDown={e => cellMouseDown(i, 6, e)}>
+                          <button
+                            onClick={e => {
+                              e.stopPropagation()
+                              if (openSubjectKey === row._key) {
+                                setOpenSubjectKey(null); setSubjectDropPos(null)
+                              } else {
+                                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                                setSubjectDropPos({ top: rect.bottom + 4, left: rect.left })
+                                setOpenSubjectKey(row._key)
+                              }
+                            }}
+                            style={{ ...cellInput, textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '13px' }}>
+                              {row.subject_ids.length === 0 ? '— Subject —' : row.subject_ids.map(id => rowSubjects.find(s => s.id === id)?.name).filter(Boolean).join(', ')}
+                            </span>
+                            <ChevronDown size={11} style={{ flexShrink: 0, color: 'var(--color-text-muted)' }} />
+                          </button>
+                          {openSubjectKey === row._key && subjectDropPos && (
+                            <div style={{ position: 'fixed', top: subjectDropPos.top, left: subjectDropPos.left, zIndex: 150, minWidth: '180px', maxHeight: '180px', overflow: 'auto', backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', boxShadow: '0 8px 24px rgba(0,0,0,0.12)' }}>
+                              {rowSubjects.length === 0
+                                ? <p className="px-3 py-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>No subjects for this class</p>
+                                : rowSubjects.map(s => (
+                                  <label key={s.id} className="flex items-center gap-2 px-3 py-2 cursor-pointer" style={{ fontSize: '13px' }}>
+                                    <input type="checkbox" checked={row.subject_ids.includes(s.id)}
+                                      onChange={e => { e.stopPropagation(); updateRow(row._key, { subject_ids: row.subject_ids.includes(s.id) ? row.subject_ids.filter(id => id !== s.id) : [...row.subject_ids, s.id] }) }}
+                                      style={{ accentColor: '#0BB5C7' }} />
+                                    <span style={{ color: 'var(--color-text-primary)' }}>{s.name}</span>
+                                  </label>
+                                ))
+                              }
+                            </div>
+                          )}
+                        </td>
+
+                        {/* Topic — expand button */}
+                        <td className="px-2 py-1.5" style={{ minWidth: '80px', ...cs(i, 7) }}
+                          onMouseDown={e => cellMouseDown(i, 7, e)}>
+                          <button
+                            onClick={e => { e.stopPropagation(); toggleTopicExpand(row._key) }}
+                            className="flex items-center gap-1 px-2 py-1 rounded text-xs"
+                            style={{ color: row.topic ? '#0BB5C7' : 'var(--color-text-muted)', backgroundColor: row.topic ? 'rgba(11,181,199,0.08)' : 'transparent', border: row.topic ? '1px solid rgba(11,181,199,0.2)' : '1px solid transparent' }}>
+                            <FileText size={12} />
+                            {row.topic ? 'Edit' : 'Add'}
+                          </button>
+                        </td>
+
+                        {/* Status */}
+                        <td className="px-2 py-1.5" style={{ minWidth: '130px', ...cs(i, 8) }}
+                          onMouseDown={e => cellMouseDown(i, 8, e)}>
+                          <select value={row.status}
+                            onChange={e => { const v = e.target.value as SessionStatus; updateRow(row._key, { status: v, _statusLocked: true }) }}
+                            className="text-xs font-semibold rounded-full px-2.5 py-1"
+                            style={{ border: 'none', outline: 'none', cursor: 'pointer', ...STATUS_COLORS[row.status] }}>
+                            {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          </select>
+                        </td>
+
+                        {/* Delete */}
+                        <td className="px-2 py-1.5" style={{ width: '40px' }}>
+                          <button onClick={() => removeRow(row._key, row.id)}
+                            className="w-6 h-6 flex items-center justify-center rounded"
+                            style={{ color: 'var(--color-danger)' }}>
+                            <Trash2 size={12} />
+                          </button>
+                        </td>
+                      </tr>
+                      {expandedTopicKeys.has(row._key) && (
+                        <tr style={{ borderBottom: i < rows.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
+                          <td colSpan={11} className="px-3 pb-2 pt-1">
+                            <RichTextEditor
+                              value={row.topic ?? ''}
+                              onChange={v => updateRow(row._key, { topic: v })}
+                              placeholder="Enter topic details…"
+                            />
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  )
+                })}
+              </tbody>
+            </table>
+          </>
         )}
       </div>
 

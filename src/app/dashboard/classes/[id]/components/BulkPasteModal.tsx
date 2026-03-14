@@ -14,7 +14,10 @@ interface Props {
 }
 
 function parseColumn(text: string): string[] {
-  return text.split('\n').map(s => s.trim()).filter(Boolean)
+  if (!text.trim()) return []
+  const lines = text.split('\n').map(s => s.trim())
+  while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
+  return lines
 }
 
 function isValidEmail(email: string): boolean {

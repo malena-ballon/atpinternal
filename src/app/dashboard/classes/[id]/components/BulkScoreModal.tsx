@@ -100,6 +100,8 @@ export default function BulkScoreModal({ exam, classId, className, classStudents
   const [totalWarning, setTotalWarning] = useState('')
   const [sel, setSel] = useState<Sel | null>(null)
   const anchorRef = useRef<{ r: number; c: number } | null>(null)
+  const [showCleanupDialog, setShowCleanupDialog] = useState(false)
+  const [cleanupRowIdxs, setCleanupRowIdxs] = useState<number[]>([])
 
   useEffect(() => {
     if (preview) return
@@ -125,7 +127,7 @@ export default function BulkScoreModal({ exam, classId, className, classStudents
         e.preventDefault()
         navigator.clipboard.readText().then(text => {
           if (!text) return
-          const lines = text.trim().split('\n').filter(Boolean)
+          const lines = text.trimEnd().split('\n')
           setGridRows(prev => {
             const next = [...prev]
             for (let ri = 0; ri < lines.length; ri++) {
@@ -201,7 +203,7 @@ export default function BulkScoreModal({ exam, classId, className, classStudents
     const lines = text.split('\n').map(r => r.replace(/\r$/, ''))
     const tableData = lines
       .map(r => r.split('\t').map(c => c.trim()))
-      .filter(r => r.some(c => c))
+      .filter((r, i, arr) => i < arr.reduce((last, row, idx) => row.some(c => c) ? idx : last, -1) + 1)
     if (tableData.length === 0) return
 
     // Auto-skip header row only when pasting from col 0
@@ -238,7 +240,25 @@ export default function BulkScoreModal({ exam, classId, className, classStudents
   function handlePreview() {
     setError('')
     setTotalWarning('')
-    const filledRows = gridRows.filter(r => r.name.trim())
+    const NA_RE_SCORE = /^(n\/a|na)$/i
+    const blankIdxs = gridRows.reduce<number[]>((acc, r, i) => {
+      const nameBlank = !r.name.trim() || NA_RE_SCORE.test(r.name.trim())
+      const scoresBlank = r.scores.every(s => !s?.trim() || NA_RE_SCORE.test(s.trim()))
+      if (nameBlank && scoresBlank) acc.push(i)
+      return acc
+    }, [])
+    if (blankIdxs.length > 0) {
+      setCleanupRowIdxs(blankIdxs)
+      setShowCleanupDialog(true)
+      return
+    }
+    doPreview(gridRows)
+  }
+
+  function doPreview(rows: GridRow[]) {
+    setError('')
+    setTotalWarning('')
+    const filledRows = rows.filter(r => r.name.trim())
     if (filledRows.length === 0) { setError('No data entered. Fill in rows or paste from a spreadsheet.'); return }
 
     const parsedRows: PreviewRow[] = []
@@ -633,6 +653,43 @@ export default function BulkScoreModal({ exam, classId, className, classStudents
                 style={{ backgroundColor: '#0BB5C7' }}>
                 {loading && <Loader2 size={14} className="animate-spin" />}
                 Import {importCount} Score{importCount !== 1 ? 's' : ''}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showCleanupDialog && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="rounded-2xl p-6 w-full max-w-sm space-y-4" style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+            <h3 className="text-base font-semibold" style={{ color: 'var(--color-text-primary)' }}>Blank / N/A rows detected</h3>
+            <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+              {cleanupRowIdxs.length} row{cleanupRowIdxs.length !== 1 ? 's are' : ' is'} blank or contain only N/A values. Delete {cleanupRowIdxs.length !== 1 ? 'them' : 'it'} before previewing?
+            </p>
+            <div className="flex justify-end gap-3 flex-wrap pt-1">
+              <button
+                onClick={() => { setShowCleanupDialog(false); setCleanupRowIdxs([]) }}
+                className="px-4 py-2 text-sm rounded-xl"
+                style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}>
+                Cancel
+              </button>
+              <button
+                onClick={() => { setShowCleanupDialog(false); setCleanupRowIdxs([]); doPreview(gridRows) }}
+                className="px-4 py-2 text-sm rounded-xl"
+                style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}>
+                Keep & Preview
+              </button>
+              <button
+                onClick={() => {
+                  const idxSet = new Set(cleanupRowIdxs)
+                  const cleaned = gridRows.filter((_, i) => !idxSet.has(i))
+                  setGridRows(cleaned)
+                  setShowCleanupDialog(false)
+                  setCleanupRowIdxs([])
+                  doPreview(cleaned)
+                }}
+                className="px-4 py-2 text-sm font-semibold rounded-xl text-white"
+                style={{ backgroundColor: 'var(--color-danger)' }}>
+                Delete & Preview
               </button>
             </div>
           </div>

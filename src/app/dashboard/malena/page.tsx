@@ -131,7 +131,7 @@ export default function MalenaPage() {
           className="text-lg max-w-xl mt-2 leading-relaxed"
           style={{ color: 'var(--color-text-secondary)' }}
         >
-          insert mssg
+          Some of my friends have asked me, “Why Mark?” My answer always goes along the lines of, “Because he’s kind.” I know it sounds like the simplest answer in the world, but I don’t think most people recognize how much depth that word carries, which I understand because I couldn’t have fully realized it either until I met you, and even now, I still find myself with no better answer in a casual conversation than this seemingly simple one word that radiates through every aspect of you.
         </p>
       </div>
     </div>

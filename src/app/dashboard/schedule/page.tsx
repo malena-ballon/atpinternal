@@ -147,7 +147,7 @@ function ScheduleContent() {
     const supabase = createClient()
     Promise.all([
       supabase.from('sessions')
-        .select('id, date, start_time, end_time, status, student_count, notes, zoom_link, topic, class_id, subject_id, teacher_id, subjects(name), teachers(name), classes(name)')
+        .select('id, date, start_time, end_time, status, student_count, notes, zoom_link, topic, class_id, subject_id, subject_ids, teacher_id, subjects(name), teachers(name), classes(name)')
         .order('date', { ascending: false })
         .order('start_time'),
       supabase.from('classes').select('id, name, status, zoom_link, description, default_passing_pct, created_at, updated_at').eq('status', 'active'),
@@ -175,7 +175,11 @@ function ScheduleContent() {
       // Default: all options selected
       setFilterClasses(new Set(loadedClasses.map(c => c.id)))
       setFilterTeachers(new Set(loadedTeachers.map(t => t.id)))
-      const subjectIds = new Set(loadedSessions.filter(s => s.subject_id).map(s => s.subject_id!))
+      const subjectIds = new Set<string>()
+      loadedSessions.forEach(s => {
+        if (s.subject_ids?.length) s.subject_ids.forEach(id => subjectIds.add(id))
+        else if (s.subject_id) subjectIds.add(s.subject_id)
+      })
       setFilterSubjects(subjectIds)
       setLoading(false)
     })
@@ -187,7 +191,10 @@ function ScheduleContent() {
       if (q && !([s.subjects?.name, s.classes?.name, s.teachers?.name, s.notes].some(v => v?.toLowerCase().includes(qLow)))) return false
       if (filterClasses.size > 0 && !filterClasses.has(s.class_id)) return false
       if (filterTeachers.size > 0 && s.teacher_id && !filterTeachers.has(s.teacher_id)) return false
-      if (filterSubjects.size > 0 && s.subject_id && !filterSubjects.has(s.subject_id)) return false
+      if (filterSubjects.size > 0) {
+        const ids = s.subject_ids?.length ? s.subject_ids : s.subject_id ? [s.subject_id] : []
+        if (ids.length > 0 && !ids.some(id => filterSubjects.has(id))) return false
+      }
       if (filterStatuses.size > 0 && !filterStatuses.has(s.status as SessionStatus)) return false
       if (hideFinished && filterStatuses.size === 0 && (s.status === 'completed' || s.status === 'cancelled')) return false
       if (filterFrom && s.date < filterFrom) return false
@@ -225,10 +232,18 @@ function ScheduleContent() {
     setShowCreate(false)
   }
 
-  const subjectOptions = Array.from(
-    new Map(sessions.filter(s => s.subject_id && s.subjects?.name).map(s => [s.subject_id!, s.subjects!.name!])),
-    ([id, name]) => ({ value: id, label: name })
-  ).sort((a, b) => a.label.localeCompare(b.label))
+  const subjectOptionMap = new Map<string, string>()
+  sessions.forEach(s => {
+    const classSubjects = subjectsByClass.get(s.class_id) ?? []
+    const ids = s.subject_ids?.length ? s.subject_ids : s.subject_id ? [s.subject_id] : []
+    ids.forEach(id => {
+      if (!subjectOptionMap.has(id)) {
+        const name = classSubjects.find(sub => sub.id === id)?.name ?? s.subjects?.name
+        if (name) subjectOptionMap.set(id, name)
+      }
+    })
+  })
+  const subjectOptions = Array.from(subjectOptionMap, ([id, name]) => ({ value: id, label: name })).sort((a, b) => a.label.localeCompare(b.label))
 
   const classOptions = classes.map(c => ({ value: c.id, label: c.name }))
   const teacherOptions = teachers.map(t => ({ value: t.id, label: t.name }))

@@ -57,6 +57,7 @@ export interface SessionRow {
   id: string
   class_id: string
   subject_id: string | null
+  subject_ids?: string[] | null
   teacher_id: string | null
   date: string
   start_time: string

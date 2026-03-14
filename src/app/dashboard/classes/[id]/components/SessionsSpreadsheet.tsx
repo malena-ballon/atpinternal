@@ -1,8 +1,10 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { format, parseISO, isToday, isBefore, startOfDay, parse, isValid } from 'date-fns'
-import { Plus, Trash2, Loader2, Check, CalendarDays, AlertTriangle, Pencil, Mail, Search, ChevronDown, X } from 'lucide-react'
+import { Plus, Trash2, Loader2, Check, CalendarDays, AlertTriangle, Pencil, Mail, Search, ChevronDown, X, FileText } from 'lucide-react'
+import TimeInput from '@/app/dashboard/components/TimeInput'
+import RichTextEditor from '@/app/dashboard/components/RichTextEditor'
 import EmailComposeStep, { type EmailRecipient } from './insights/EmailComposeStep'
 import { sendReportEmails, logActivity } from '@/app/actions'
 import { createClient } from '@/utils/supabase/client'
@@ -79,7 +81,7 @@ interface DraftRow {
   start_time: string
   end_time: string
   teacher_id: string
-  subject_id: string
+  subject_ids: string[]
   topic: string
   status: SessionStatus
   _statusLocked: boolean
@@ -123,8 +125,8 @@ function fmt12(t: string): string {
 }
 
 // editable columns: 0=date,1=start,2=end,3=teacher,4=subject,5=topic
-type PasteCol = 'date' | 'start_time' | 'end_time' | 'teacher_id' | 'subject_id' | 'topic'
-const PASTE_COLS: PasteCol[] = ['date', 'start_time', 'end_time', 'teacher_id', 'subject_id', 'topic']
+type PasteCol = 'date' | 'start_time' | 'end_time' | 'teacher_id' | 'subject_ids' | 'topic'
+const PASTE_COLS: PasteCol[] = ['date', 'start_time', 'end_time', 'teacher_id', 'subject_ids', 'topic']
 
 const cellInput: React.CSSProperties = {
   width: '100%', background: 'transparent', border: 'none', outline: 'none',
@@ -193,7 +195,7 @@ function sessionToRow(s: SessionRow): DraftRow {
     start_time: s.start_time.slice(0,5),
     end_time: s.end_time.slice(0,5),
     teacher_id: s.teacher_id ?? '',
-    subject_id: s.subject_id ?? '',
+    subject_ids: s.subject_ids?.length ? s.subject_ids : s.subject_id ? [s.subject_id] : [],
     topic: s.topic ?? '',
     status: s.status as SessionStatus,
     _statusLocked: s.status === 'cancelled' || s.status === 'rescheduled',
@@ -202,7 +204,7 @@ function sessionToRow(s: SessionRow): DraftRow {
 }
 
 function blankRow(): DraftRow {
-  return { _key: newKey(), date: '', start_time: '', end_time: '', teacher_id: '', subject_id: '', topic: '',
+  return { _key: newKey(), date: '', start_time: '', end_time: '', teacher_id: '', subject_ids: [], topic: '',
     status: 'scheduled', _statusLocked: false, _isNew: true, _dirty: true }
 }
 
@@ -211,7 +213,7 @@ function getCellText(row: DraftRow, c: number, teachers: TeacherRow[], subjects:
   if (c === 1) return row.start_time
   if (c === 2) return row.end_time
   if (c === 3) return teachers.find(t => t.id === row.teacher_id)?.name ?? ''
-  if (c === 4) return subjects.find(s => s.id === row.subject_id)?.name ?? ''
+  if (c === 4) return row.subject_ids.map(id => subjects.find(s => s.id === id)?.name).filter(Boolean).join(', ')
   if (c === 5) return row.topic
   return ''
 }
@@ -223,7 +225,7 @@ function applyCellValue(row: DraftRow, c: number, raw: string, teachers: Teacher
   else if (col === 'start_time') { row.start_time = parseTime(raw) || row.start_time }
   else if (col === 'end_time')   { row.end_time   = parseTime(raw) || row.end_time }
   else if (col === 'teacher_id') { const m = teachers.find(t => t.name.toLowerCase() === raw.toLowerCase()); if (m) row.teacher_id = m.id }
-  else if (col === 'subject_id') { const m = subjects.find(s => s.name.toLowerCase() === raw.toLowerCase()); if (m) row.subject_id = m.id }
+  else if (col === 'subject_ids') { const m = subjects.find(s => s.name.toLowerCase() === raw.toLowerCase()); if (m) row.subject_ids = row.subject_ids.includes(m.id) ? row.subject_ids : [...row.subject_ids, m.id] }
   else if (col === 'topic') { row.topic = raw.trim() }
 }
 
@@ -251,6 +253,9 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
   // Edit mode
   const [editMode, setEditMode] = useState(false)
   const [showExitConfirm, setShowExitConfirm] = useState(false)
+  const [openSubjectKey, setOpenSubjectKey] = useState<string | null>(null)
+  const [subjectDropPos, setSubjectDropPos] = useState<{ top: number; left: number } | null>(null)
+  const [expandedTopicKeys, setExpandedTopicKeys] = useState<Set<string>>(new Set())
 
   // ─── Filter state (only active in view mode) ──────────────────────────────
   const [filterQ, setFilterQ] = useState('')
@@ -272,12 +277,12 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
     if (filterQ) {
       const q = filterQ.toLowerCase()
       const tName = teachers.find(t => t.id === row.teacher_id)?.name ?? ''
-      const sName = subjects.find(s => s.id === row.subject_id)?.name ?? ''
-      if (!tName.toLowerCase().includes(q) && !sName.toLowerCase().includes(q)) return false
+      const sNames = row.subject_ids.map(id => subjects.find(s => s.id === id)?.name ?? '').join(' ')
+      if (!tName.toLowerCase().includes(q) && !sNames.toLowerCase().includes(q)) return false
     }
     if (filterStatuses.size > 0 && !filterStatuses.has(row.status)) return false
     if (filterTeacherIds.size > 0 && !filterTeacherIds.has(row.teacher_id)) return false
-    if (filterSubjectIds.size > 0 && !filterSubjectIds.has(row.subject_id ?? '')) return false
+    if (filterSubjectIds.size > 0 && !row.subject_ids.some(id => filterSubjectIds.has(id))) return false
     if (filterFrom && row.date < filterFrom) return false
     if (filterTo && row.date > filterTo) return false
     return true
@@ -299,7 +304,7 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
           startTime: row.start_time,
           endTime: row.end_time,
           teacher: teachers.find(t => t.id === row.teacher_id)?.name ?? '',
-          subject: subjects.find(s => s.id === row.subject_id)?.name ?? '',
+          subject: row.subject_ids.map(id => subjects.find(s => s.id === id)?.name).filter(Boolean).join(', '),
           topic: row.topic || '',
           status: row.status,
         }
@@ -411,7 +416,7 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
   // Browser close/refresh warning — only in edit mode with dirty changes
   useEffect(() => {
     if (!editMode || !dirtyCount) return
-    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); return (e.returnValue = '') }
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault() }
     window.addEventListener('beforeunload', handler)
     return () => window.removeEventListener('beforeunload', handler)
   }, [editMode, dirtyCount])
@@ -436,8 +441,9 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
       }
 
       if (e.key === 'v') {
-        const selSize = (r2-r1+1) * (c2-c1+1)
-        if (selSize <= 1) return // single cell: let onPaste handle
+        // Let the rich text editor handle its own paste
+        const active = document.activeElement
+        if (active instanceof HTMLElement && active.contentEditable === 'true') return
         e.preventDefault()
         navigator.clipboard.readText().then(text => {
           if (!text) return
@@ -445,23 +451,30 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
           setRows(prev => {
             const next = [...prev]
             if (pastedRows.length === 1 && !pastedRows[0].includes('\t')) {
-              // Fill entire selection with one value
+              // Single value: fill selected range
               const raw = pastedRows[0].trim()
-              for (let r = r1; r <= r2; r++) {
+              const rEnd = r1 === r2 ? r1 : r2
+              for (let r = r1; r <= rEnd; r++) {
                 if (!next[r]) continue
                 const row = { ...next[r], _dirty: true }
-                for (let c = c1; c <= c2; c++) applyCellValue(row, c, raw, teachers, subjects)
+                const cEnd = c1 === c2 ? c1 : c2
+                for (let c = c1; c <= cEnd; c++) applyCellValue(row, c, raw, teachers, subjects)
                 if (!row._statusLocked) row.status = autoStatus(row.date, row.start_time, row.end_time)
                 next[r] = row
               }
             } else {
-              for (let ri = 0; ri < pastedRows.length && (r1+ri) <= r2; ri++) {
+              // Multi-cell: paste all clipboard rows starting from r1,c1 — auto-add rows if needed
+              for (let ri = 0; ri < pastedRows.length; ri++) {
+                const rowIdx = r1 + ri
+                while (next.length <= rowIdx) next.push(blankRow())
                 const cols = pastedRows[ri].split('\t')
-                const row = { ...next[r1+ri], _dirty: true }
-                for (let ci = 0; ci < cols.length && (c1+ci) <= c2; ci++)
-                  applyCellValue(row, c1+ci, cols[ci].trim(), teachers, subjects)
+                const row = { ...next[rowIdx], _dirty: true }
+                for (let ci = 0; ci < cols.length; ci++) {
+                  if (c1 + ci > 9) break // max columns
+                  applyCellValue(row, c1 + ci, cols[ci].trim(), teachers, subjects)
+                }
                 if (!row._statusLocked) row.status = autoStatus(row.date, row.start_time, row.end_time)
-                next[r1+ri] = row
+                next[rowIdx] = row
               }
             }
             return next
@@ -557,21 +570,21 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
       if (toInsert.length > 0) {
         const { error } = await supabase.from('sessions').insert(
           toInsert.map(r => ({ class_id: classId, date: r.date, start_time: r.start_time, end_time: r.end_time,
-            teacher_id: r.teacher_id || null, subject_id: r.subject_id || null, topic: r.topic || null, status: r.status, student_count: sc }))
+            teacher_id: r.teacher_id || null, subject_ids: r.subject_ids, subject_id: r.subject_ids[0] || null, topic: r.topic || null, status: r.status, student_count: sc }))
         )
         if (error) throw error
       }
       for (const r of toUpdate) {
         const { error } = await supabase.from('sessions').update({
           date: r.date, start_time: r.start_time, end_time: r.end_time,
-          teacher_id: r.teacher_id || null, subject_id: r.subject_id || null, topic: r.topic || null, status: r.status, student_count: sc,
+          teacher_id: r.teacher_id || null, subject_ids: r.subject_ids, subject_id: r.subject_ids[0] || null, topic: r.topic || null, status: r.status, student_count: sc,
         }).eq('id', r.id!)
         if (error) throw error
       }
       if (rows.some(r => !r._isNew))
         await supabase.from('sessions').update({ student_count: sc }).eq('class_id', classId)
       const { data: fresh } = await supabase.from('sessions')
-        .select('id, date, start_time, end_time, status, student_count, zoom_link, notes, topic, class_id, subject_id, teacher_id, subjects(name), teachers(name), classes(name)')
+        .select('id, date, start_time, end_time, status, student_count, zoom_link, notes, topic, class_id, subject_id, subject_ids, teacher_id, subjects(name), teachers(name), classes(name)')
         .eq('class_id', classId).order('date').order('start_time')
       if (fresh) setRows((fresh as unknown as SessionRow[]).map(sessionToRow))
       setDeletedIds(new Set())
@@ -688,6 +701,8 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
         </div>
       )}
 
+      {openSubjectKey && <div className="fixed inset-0 z-[149]" onClick={() => { setOpenSubjectKey(null); setSubjectDropPos(null) }} />}
+
       {/* Table */}
       <div className="rounded-xl overflow-x-auto" style={{ border: '1px solid var(--color-border)' }}>
         <table className="w-full" style={{ minWidth: '820px' }}>
@@ -703,133 +718,177 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
               <tr><td colSpan={10} className="px-4 py-12 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>{rows.length === 0 ? 'No sessions yet.' : 'No sessions match the filters.'}</td></tr>
             )}
             {displayRows.map((row, i) => (
-              <tr key={row._key} style={{ borderBottom: i < displayRows.length-1 ? '1px solid var(--color-border)' : 'none' }}>
-                <td className="px-3 py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)', width: '36px' }}>{i+1}</td>
+              <React.Fragment key={row._key}>
+                <tr style={{ borderBottom: expandedTopicKeys.has(row._key) ? 'none' : (i < displayRows.length-1 ? '1px solid var(--color-border)' : 'none') }}>
+                  <td className="px-3 py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)', width: '36px' }}>{i+1}</td>
 
-                {!editMode ? (
-                  // ── View mode ──────────────────────────────────────────────────
-                  <>
-                    <td className="px-3 py-2.5 text-sm" style={{ color: 'var(--color-text-primary)' }}>
-                      {row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? format(parseISO(row.date), 'MMM d, yyyy') : '—'}
-                    </td>
-                    <td className="px-3 py-2.5 text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                      {row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? format(parseISO(row.date), 'EEE') : '—'}
-                    </td>
-                    <td className="px-3 py-2.5 text-sm" style={{ color: 'var(--color-text-secondary)' }}>{fmt12(row.start_time)}</td>
-                    <td className="px-3 py-2.5 text-sm" style={{ color: 'var(--color-text-secondary)' }}>{fmt12(row.end_time)}</td>
-                    <td className="px-3 py-2.5 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                      {teachers.find(t => t.id === row.teacher_id)?.name ?? <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
-                    </td>
-                    <td className="px-3 py-2.5 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                      {subjects.find(s => s.id === row.subject_id)?.name ?? <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
-                    </td>
-                    <td className="px-3 py-2.5 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                      {row.topic || <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={STATUS_COLORS[row.status]}>
-                        {STATUS_OPTIONS.find(o => o.value === row.status)?.label}
-                      </span>
-                    </td>
-                    <td />
-                  </>
-                ) : (
-                  // ── Edit mode ──────────────────────────────────────────────────
-                  <>
-                    {/* Date col=0 */}
-                    <td className="px-2 py-1.5" style={{ minWidth: '160px', ...cellStyle(i,0,row) }} onMouseDown={e => cellMouseDown(i,0,e)}>
-                      <div style={{ display:'flex', alignItems:'center', gap:'4px' }}>
-                        <input type="text"
-                          value={row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? format(parseISO(row.date),'M/d/yyyy') : row.date}
-                          placeholder="M/D/YYYY"
-                          onChange={e => { const p = parseDate(e.target.value); updateRow(row._key, { date: p || e.target.value }) }}
-                          onBlur={e => { const p = parseDate(e.target.value); if (p) updateRow(row._key, { date: p }) }}
-                          onPaste={e => handleCellPaste(e, row._key, 0)}
-                          style={{ ...cellInput, flex:1, minWidth:0 }} />
-                        <label style={{ cursor:'pointer', lineHeight:0, flexShrink:0, position:'relative' }}>
-                          <input type="date" value={row.date} onChange={e => updateRow(row._key, { date: e.target.value })}
-                            style={{ position:'absolute', opacity:0, width:'1px', height:'1px', pointerEvents:'none' }} tabIndex={-1} />
-                          <CalendarDays size={13} style={{ color:'var(--color-text-muted)', display:'block' }}
-                            onClick={e => {
-                              const inp = (e.currentTarget as unknown as HTMLElement).closest('label')?.querySelector('input[type="date"]') as HTMLInputElement|null
-                              inp?.showPicker?.()
-                            }} />
-                        </label>
-                      </div>
-                    </td>
+                  {!editMode ? (
+                    // ── View mode ──────────────────────────────────────────────────
+                    <>
+                      <td className="px-3 py-2.5 text-sm" style={{ color: 'var(--color-text-primary)' }}>
+                        {row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? format(parseISO(row.date), 'MMM d, yyyy') : '—'}
+                      </td>
+                      <td className="px-3 py-2.5 text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                        {row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? format(parseISO(row.date), 'EEE') : '—'}
+                      </td>
+                      <td className="px-3 py-2.5 text-sm" style={{ color: 'var(--color-text-secondary)' }}>{row.start_time ? fmt12(row.start_time) : '—'}</td>
+                      <td className="px-3 py-2.5 text-sm" style={{ color: 'var(--color-text-secondary)' }}>{row.end_time ? fmt12(row.end_time) : '—'}</td>
+                      <td className="px-3 py-2.5 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                        {teachers.find(t => t.id === row.teacher_id)?.name ?? <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        {row.subject_ids.length > 0
+                          ? <div className="flex flex-wrap gap-1">{row.subject_ids.map(id => { const n = subjects.find(s => s.id === id)?.name; return n ? <span key={id} className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: 'rgba(11,181,199,0.1)', color: '#0BB5C7' }}>{n}</span> : null })}</div>
+                          : <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        {row.topic
+                          ? <button onClick={() => setExpandedTopicKeys(prev => { const n = new Set(prev); n.has(row._key) ? n.delete(row._key) : n.add(row._key); return n })} className="flex items-center gap-1 text-xs font-medium" style={{ color: '#0BB5C7' }}>
+                              <FileText size={12} />{expandedTopicKeys.has(row._key) ? 'Hide' : 'View'}
+                            </button>
+                          : <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={STATUS_COLORS[row.status]}>
+                          {STATUS_OPTIONS.find(o => o.value === row.status)?.label}
+                        </span>
+                      </td>
+                      <td />
+                    </>
+                  ) : (
+                    // ── Edit mode ──────────────────────────────────────────────────
+                    <>
+                      {/* Date col=0 */}
+                      <td className="px-2 py-1.5" style={{ minWidth: '160px', ...cellStyle(i,0,row) }} onMouseDown={e => cellMouseDown(i,0,e)}>
+                        <div style={{ display:'flex', alignItems:'center', gap:'4px' }}>
+                          <input type="text"
+                            value={row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? format(parseISO(row.date),'M/d/yyyy') : row.date}
+                            placeholder="M/D/YYYY"
+                            onChange={e => { const p = parseDate(e.target.value); updateRow(row._key, { date: p || e.target.value }) }}
+                            onBlur={e => { const p = parseDate(e.target.value); if (p) updateRow(row._key, { date: p }) }}
+                            onPaste={e => handleCellPaste(e, row._key, 0)}
+                            style={{ ...cellInput, flex:1, minWidth:0 }} />
+                          <label style={{ cursor:'pointer', lineHeight:0, flexShrink:0, position:'relative' }}>
+                            <input type="date" value={row.date} onChange={e => updateRow(row._key, { date: e.target.value })}
+                              style={{ position:'absolute', opacity:0, width:'1px', height:'1px', pointerEvents:'none' }} tabIndex={-1} />
+                            <CalendarDays size={13} style={{ color:'var(--color-text-muted)', display:'block' }}
+                              onClick={e => {
+                                const inp = (e.currentTarget as unknown as HTMLElement).closest('label')?.querySelector('input[type="date"]') as HTMLInputElement|null
+                                inp?.showPicker?.()
+                              }} />
+                          </label>
+                        </div>
+                      </td>
 
-                    {/* Day (auto) */}
-                    <td className="px-2 py-1.5 text-xs" style={{ color:'var(--color-text-muted)', minWidth:'48px' }}>
-                      {row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? format(parseISO(row.date),'EEE') : '—'}
-                    </td>
+                      {/* Day (auto) */}
+                      <td className="px-2 py-1.5 text-xs" style={{ color:'var(--color-text-muted)', minWidth:'48px' }}>
+                        {row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? format(parseISO(row.date),'EEE') : '—'}
+                      </td>
 
-                    {/* Start col=1 */}
-                    <td className="px-2 py-1.5" style={{ minWidth:'110px', ...cellStyle(i,1,row) }} onMouseDown={e => cellMouseDown(i,1,e)}>
-                      <input type="time" value={row.start_time} onChange={e => updateRow(row._key,{start_time:e.target.value})}
-                        onPaste={e => handleCellPaste(e,row._key,1)} style={cellInput} />
-                    </td>
+                      {/* Start col=1 */}
+                      <td className="px-2 py-1.5" style={{ minWidth:'130px', ...cellStyle(i,1,row) }} onMouseDown={e => cellMouseDown(i,1,e)}>
+                        <TimeInput value={row.start_time} onChange={v => updateRow(row._key,{start_time:v})} />
+                      </td>
 
-                    {/* End col=2 */}
-                    <td className="px-2 py-1.5" style={{ minWidth:'110px', ...cellStyle(i,2,row) }} onMouseDown={e => cellMouseDown(i,2,e)}>
-                      <input type="time" value={row.end_time} onChange={e => updateRow(row._key,{end_time:e.target.value})}
-                        onPaste={e => handleCellPaste(e,row._key,2)} style={cellInput} />
-                    </td>
+                      {/* End col=2 */}
+                      <td className="px-2 py-1.5" style={{ minWidth:'130px', ...cellStyle(i,2,row) }} onMouseDown={e => cellMouseDown(i,2,e)}>
+                        <TimeInput value={row.end_time} onChange={v => updateRow(row._key,{end_time:v})} />
+                      </td>
 
-                    {/* Teacher col=3 */}
-                    <td className="px-2 py-1.5" style={{ minWidth:'165px', ...cellStyle(i,3,row) }} onMouseDown={e => cellMouseDown(i,3,e)}
-                      onPaste={e => handleCellPaste(e,row._key,3)}>
-                      <div style={{ display:'flex', alignItems:'center', gap:'4px' }}>
-                        <select value={row.teacher_id} onChange={e => updateRow(row._key,{teacher_id:e.target.value})}
-                          style={{ ...cellInput, cursor:'pointer', flex:1 }}>
-                          <option value="">— Teacher —</option>
-                          {teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                      {/* Teacher col=3 */}
+                      <td className="px-2 py-1.5" style={{ minWidth:'165px', ...cellStyle(i,3,row) }} onMouseDown={e => cellMouseDown(i,3,e)}
+                        onPaste={e => handleCellPaste(e,row._key,3)}>
+                        <div style={{ display:'flex', alignItems:'center', gap:'4px' }}>
+                          <select value={row.teacher_id} onChange={e => updateRow(row._key,{teacher_id:e.target.value})}
+                            style={{ ...cellInput, cursor:'pointer', flex:1 }}>
+                            <option value="">— Teacher —</option>
+                            {teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                          </select>
+                          {checkAvailConflict(teachers.find(t => t.id === row.teacher_id), row.date, row.start_time) && (
+                            <span title="Outside teacher's availability" style={{ flexShrink:0, lineHeight:0 }}><AlertTriangle size={13} style={{ color:'#D97706' }} /></span>
+                          )}
+                          {rowHasScheduleConflict(i) && (
+                            <span title="Teacher already has an overlapping session" style={{ flexShrink:0, lineHeight:0 }}><AlertTriangle size={13} style={{ color:'var(--color-danger)' }} /></span>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Subject col=4 — multi-checkbox dropdown */}
+                      <td className="px-2 py-1.5" style={{ minWidth:'160px', ...cellStyle(i,4,row) }} onMouseDown={e => cellMouseDown(i,4,e)}
+                        onPaste={e => handleCellPaste(e,row._key,4)}>
+                        <button onClick={e => {
+                            e.stopPropagation()
+                            if (openSubjectKey === row._key) { setOpenSubjectKey(null); setSubjectDropPos(null) }
+                            else {
+                              const r = e.currentTarget.getBoundingClientRect()
+                              setSubjectDropPos({ top: r.bottom + 4, left: r.left })
+                              setOpenSubjectKey(row._key)
+                            }
+                          }}
+                          style={{ ...cellInput, textAlign:'left', cursor:'pointer', display:'flex', alignItems:'center', gap:'4px' }}>
+                          <span style={{ flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontSize:'13px' }}>
+                            {row.subject_ids.length === 0 ? '— Subject —' : row.subject_ids.map(id => subjects.find(s => s.id === id)?.name).filter(Boolean).join(', ')}
+                          </span>
+                          <ChevronDown size={11} style={{ flexShrink:0, color:'var(--color-text-muted)' }} />
+                        </button>
+                        {openSubjectKey === row._key && subjectDropPos && (
+                          <div style={{ position:'fixed', top: subjectDropPos.top, left: subjectDropPos.left, zIndex:150, minWidth:'180px', maxHeight:'200px', overflow:'auto', backgroundColor:'var(--color-surface)', border:'1px solid var(--color-border)', borderRadius:'8px', boxShadow:'0 8px 24px rgba(0,0,0,0.15)' }}>
+                            {subjects.length === 0
+                              ? <p className="px-3 py-2 text-xs" style={{ color:'var(--color-text-muted)' }}>No subjects for this class</p>
+                              : subjects.map(s => (
+                                <label key={s.id} className="flex items-center gap-2 px-3 py-2 cursor-pointer" style={{ fontSize:'13px' }}>
+                                  <input type="checkbox" checked={row.subject_ids.includes(s.id)}
+                                    onChange={e => { e.stopPropagation(); updateRow(row._key, { subject_ids: row.subject_ids.includes(s.id) ? row.subject_ids.filter(id => id !== s.id) : [...row.subject_ids, s.id] }) }}
+                                    style={{ accentColor:'#0BB5C7' }} />
+                                  <span style={{ color:'var(--color-text-primary)' }}>{s.name}</span>
+                                </label>
+                              ))
+                            }
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Topic col=5 — expand button */}
+                      <td className="px-2 py-1.5" style={{ minWidth:'80px', ...cellStyle(i,5,row) }} onMouseDown={e => cellMouseDown(i,5,e)}>
+                        <button onClick={e => { e.stopPropagation(); setExpandedTopicKeys(prev => { const n = new Set(prev); n.has(row._key) ? n.delete(row._key) : n.add(row._key); return n }) }}
+                          className="flex items-center gap-1 px-2 py-1 rounded text-xs"
+                          style={{ color: row.topic ? '#0BB5C7' : 'var(--color-text-muted)', backgroundColor: row.topic ? 'rgba(11,181,199,0.08)' : 'transparent', border: row.topic ? '1px solid rgba(11,181,199,0.2)' : '1px solid transparent' }}>
+                          <FileText size={12} />{row.topic ? 'Edit' : 'Add'}
+                        </button>
+                      </td>
+
+                      {/* Status */}
+                      <td className="px-2 py-1.5" style={{ minWidth:'130px' }}>
+                        <select value={row.status}
+                          onChange={e => { const v = e.target.value as SessionStatus; updateRow(row._key,{status:v,_statusLocked:true}) }}
+                          className="text-xs font-semibold rounded-full px-2.5 py-1"
+                          style={{ border:'none', outline:'none', cursor:'pointer', ...STATUS_COLORS[row.status] }}>
+                          {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                         </select>
-                        {checkAvailConflict(teachers.find(t => t.id === row.teacher_id), row.date, row.start_time) && (
-                          <span title="Outside teacher's availability" style={{ flexShrink:0, lineHeight:0 }}><AlertTriangle size={13} style={{ color:'#D97706' }} /></span>
-                        )}
-                        {rowHasScheduleConflict(i) && (
-                          <span title="Teacher already has an overlapping session" style={{ flexShrink:0, lineHeight:0 }}><AlertTriangle size={13} style={{ color:'var(--color-danger)' }} /></span>
-                        )}
-                      </div>
-                    </td>
+                      </td>
 
-                    {/* Subject col=4 */}
-                    <td className="px-2 py-1.5" style={{ minWidth:'150px', ...cellStyle(i,4,row) }} onMouseDown={e => cellMouseDown(i,4,e)}
-                      onPaste={e => handleCellPaste(e,row._key,4)}>
-                      <select value={row.subject_id} onChange={e => updateRow(row._key,{subject_id:e.target.value})}
-                        style={{ ...cellInput, cursor:'pointer' }}>
-                        <option value="">— Subject —</option>
-                        {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                      </select>
+                      {/* Delete */}
+                      <td className="px-2 py-1.5" style={{ width:'40px' }}>
+                        <button onClick={() => removeRow(row._key, row.id)} className="w-6 h-6 flex items-center justify-center rounded" style={{ color:'var(--color-danger)' }}>
+                          <Trash2 size={12} />
+                        </button>
+                      </td>
+                    </>
+                  )}
+                </tr>
+                {expandedTopicKeys.has(row._key) && (
+                  <tr style={{ borderBottom: i < displayRows.length-1 ? '1px solid var(--color-border)' : 'none' }}>
+                    <td colSpan={10} className="px-3 pb-2 pt-1">
+                      {editMode
+                        ? <RichTextEditor value={row.topic ?? ''} onChange={v => updateRow(row._key, { topic: v })} placeholder="Enter topic details…" />
+                        : <div className="rounded-lg p-3" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
+                            <div className="rich-content" style={{ color: 'var(--color-text-primary)', fontSize: '13px' }} dangerouslySetInnerHTML={{ __html: row.topic ?? '' }} />
+                          </div>
+                      }
                     </td>
-
-                    {/* Topic col=5 */}
-                    <td className="px-2 py-1.5" style={{ minWidth:'160px', ...cellStyle(i,5,row) }} onMouseDown={e => cellMouseDown(i,5,e)}>
-                      <input type="text" value={row.topic} placeholder="Topic…"
-                        onChange={e => updateRow(row._key,{topic:e.target.value})}
-                        onPaste={e => handleCellPaste(e,row._key,5)}
-                        style={cellInput} />
-                    </td>
-
-                    {/* Status */}
-                    <td className="px-2 py-1.5" style={{ minWidth:'130px' }}>
-                      <select value={row.status}
-                        onChange={e => { const v = e.target.value as SessionStatus; updateRow(row._key,{status:v,_statusLocked:true}) }}
-                        className="text-xs font-semibold rounded-full px-2.5 py-1"
-                        style={{ border:'none', outline:'none', cursor:'pointer', ...STATUS_COLORS[row.status] }}>
-                        {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                      </select>
-                    </td>
-
-                    {/* Delete */}
-                    <td className="px-2 py-1.5" style={{ width:'40px' }}>
-                      <button onClick={() => removeRow(row._key, row.id)} className="w-6 h-6 flex items-center justify-center rounded" style={{ color:'var(--color-danger)' }}>
-                        <Trash2 size={12} />
-                      </button>
-                    </td>
-                  </>
+                  </tr>
                 )}
-              </tr>
+              </React.Fragment>
             ))}
           </tbody>
         </table>
