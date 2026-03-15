@@ -266,7 +266,7 @@ export async function sendTeacherSessionEmail(sessionIds: string[]): Promise<{ s
         sent++
         const sessionLines = teacherSessions.map(s => {
           const cls = (s as { classes?: { name: string }[] | null }).classes?.[0]?.name ?? '—'
-          const subj = (s as { subjects?: { name: string } | null }).subjects?.name ?? '—'
+          const subj = (s as { subjects?: { name: string }[] | null }).subjects?.[0]?.name ?? '—'
           return `• ${s.date}  ${s.start_time ? fmtTime(s.start_time) + ' – ' + fmtTime(s.end_time ?? '') : 'Time TBD'}  |  ${subj}  |  ${cls}`
         }).join('\n')
         await logSentEmail({
