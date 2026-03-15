@@ -1,8 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Eye, EyeOff, RefreshCw, Send, Link2, CheckCircle2, Loader2, Mail } from 'lucide-react'
-import { generateStudentCodes, getStudentCodes, sendStudentAccessCodes } from '@/app/actions'
+import { Eye, EyeOff, RefreshCw, Send, Link2, CheckCircle2, Loader2, Mail, Palette } from 'lucide-react'
+import { generateStudentCodes, getStudentCodes, sendStudentAccessCodes, getPortalTheme, savePortalTheme } from '@/app/actions'
 import type { StudentRow } from '@/types'
 
 interface Props {
@@ -26,6 +26,8 @@ export default function StudentCodesTab({ classId, className, students }: Props)
   const [sendResult, setSendResult] = useState<{ sent: number; failed: number } | null>(null)
   const [copied, setCopied] = useState(false)
   const [genError, setGenError] = useState('')
+  const [theme, setTheme] = useState('#1E3A5F')
+  const [savingTheme, setSavingTheme] = useState(false)
 
   const portalUrl = typeof window !== 'undefined'
     ? `${window.location.origin}/portal`
@@ -33,6 +35,7 @@ export default function StudentCodesTab({ classId, className, students }: Props)
 
   useEffect(() => {
     loadCodes()
+    getPortalTheme().then(setTheme)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -111,6 +114,13 @@ export default function StudentCodesTab({ classId, className, students }: Props)
     else setSelected(new Set(students.map(s => s.id)))
   }
 
+  async function handleThemeChange(color: string) {
+    setTheme(color)
+    setSavingTheme(true)
+    await savePortalTheme(color)
+    setSavingTheme(false)
+  }
+
   async function copyPortalUrl() {
     await navigator.clipboard.writeText(portalUrl)
     setCopied(true)
@@ -138,6 +148,48 @@ export default function StudentCodesTab({ classId, className, students }: Props)
         >
           {copied ? <><CheckCircle2 size={12} /> Copied!</> : <><Link2 size={12} /> Copy Link</>}
         </button>
+      </div>
+
+      {/* Theme picker */}
+      <div className="rounded-xl p-4 flex flex-wrap items-center gap-3" style={{ backgroundColor: 'rgba(0,0,0,0.02)', border: '1px solid var(--color-border)' }}>
+        <Palette size={16} className="text-gray-400 flex-shrink-0" />
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-semibold text-gray-600">Portal Theme Color</p>
+          <p className="text-xs text-gray-400">Applies to the public student portal</p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {[
+            { label: 'Navy', color: '#1E3A5F' },
+            { label: 'Maroon', color: '#7B1C2E' },
+            { label: 'Emerald', color: '#065F46' },
+            { label: 'Purple', color: '#4C1D95' },
+            { label: 'Slate', color: '#334155' },
+            { label: 'Rose', color: '#9F1239' },
+          ].map(({ label, color }) => (
+            <button
+              key={color}
+              title={label}
+              onClick={() => handleThemeChange(color)}
+              className="w-7 h-7 rounded-full border-2 transition-transform hover:scale-110"
+              style={{
+                backgroundColor: color,
+                borderColor: theme === color ? '#fff' : 'transparent',
+                boxShadow: theme === color ? `0 0 0 2px ${color}` : 'none',
+              }}
+            />
+          ))}
+          <div className="flex items-center gap-1.5 ml-1">
+            <input
+              type="color"
+              value={theme}
+              onChange={e => handleThemeChange(e.target.value)}
+              className="w-7 h-7 rounded cursor-pointer border-0"
+              title="Custom color"
+            />
+            <span className="text-xs font-mono text-gray-400">{theme}</span>
+            {savingTheme && <Loader2 size={12} className="animate-spin text-gray-400" />}
+          </div>
+        </div>
       </div>
 
       {/* Toolbar */}

@@ -690,6 +690,21 @@ export async function getEmailSettings(): Promise<{ reply_to: string | null }> {
   return { reply_to: data?.reply_to ?? null }
 }
 
+export async function getPortalTheme(): Promise<string> {
+  const svc = createServiceClient()
+  const { data } = await svc.from('email_settings').select('portal_theme').eq('id', 1).single()
+  return (data as { portal_theme?: string | null } | null)?.portal_theme ?? '#1E3A5F'
+}
+
+export async function savePortalTheme(theme: string): Promise<{ ok: boolean; error?: string }> {
+  const svc = createServiceClient()
+  const { error } = await svc.from('email_settings')
+    .update({ portal_theme: theme } as Record<string, unknown>)
+    .eq('id', 1)
+  if (error) return { ok: false, error: error.message }
+  return { ok: true }
+}
+
 export async function saveEmailSettings(replyTo: string): Promise<{ ok: boolean; error?: string }> {
   const svc = createServiceClient()
   const { error } = await svc.from('email_settings')

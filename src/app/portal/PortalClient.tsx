@@ -61,6 +61,7 @@ function computeStudentStats(
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface Props {
   classes: { id: string; name: string }[]
+  theme: string
 }
 
 type Step = 'class' | 'student' | 'code' | 'report'
@@ -74,21 +75,21 @@ function Card({ children }: { children: React.ReactNode }) {
   )
 }
 
-function StepBadge({ n, label, active, done }: { n: number; label: string; active: boolean; done: boolean }) {
+function StepBadge({ n, label, active, done, theme }: { n: number; label: string; active: boolean; done: boolean; theme: string }) {
   return (
     <div className="flex items-center gap-2">
       <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
-        style={{ backgroundColor: done ? '#16A34A' : active ? '#1E3A5F' : '#e5e7eb', color: done || active ? '#fff' : '#9ca3af' }}>
+        style={{ backgroundColor: done ? '#16A34A' : active ? theme : '#e5e7eb', color: done || active ? '#fff' : '#9ca3af' }}>
         {done ? '✓' : n}
       </div>
-      <span className="text-sm font-medium" style={{ color: active ? '#1E3A5F' : done ? '#16A34A' : '#9ca3af' }}>{label}</span>
+      <span className="text-sm font-medium" style={{ color: active ? theme : done ? '#16A34A' : '#9ca3af' }}>{label}</span>
     </div>
   )
 }
 
 // ── Report view (no export, public read-only) ──────────────────────────────────
 function ReportView({
-  stats, allStats, totalExams, classPassingPct, subjects, className,
+  stats, allStats, totalExams, classPassingPct, subjects, className, theme,
 }: {
   stats: StudentStats
   allStats: StudentStats[]
@@ -96,8 +97,9 @@ function ReportView({
   classPassingPct: number
   subjects: SubjectRow[]
   className: string
+  theme: string
 }) {
-  const upcatColor = '#1E3A5F'
+  const upcatColor = theme
   const upcatDate = new Date('2026-08-06')
   const daysUntilUpcat = Math.ceil((upcatDate.getTime() - Date.now()) / 86400000)
 
@@ -197,7 +199,7 @@ function ReportView({
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="rounded-2xl p-5" style={{ background: 'linear-gradient(135deg, #1E3A5F 0%, #2d5a8e 100%)' }}>
+      <div className="rounded-2xl p-5" style={{ background: `linear-gradient(135deg, ${theme} 0%, ${theme}cc 100%)` }}>
         <p className="text-xs font-medium mb-1" style={{ color: 'rgba(255,255,255,0.6)' }}>{className}</p>
         <h2 className="text-xl font-bold text-white">{stats.student.name}</h2>
         {stats.student.school && <p className="text-sm mt-0.5" style={{ color: 'rgba(255,255,255,0.7)' }}>{stats.student.school}</p>}
@@ -237,8 +239,8 @@ function ReportView({
                 <PolarGrid stroke="#e5e7eb" />
                 <PolarAngleAxis dataKey="subject" tick={{ fontSize: 10, fill: '#6b7280' }} />
                 <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
-                <Radar dataKey="avg" stroke="#1E3A5F" fill="#1E3A5F" fillOpacity={0.2} strokeWidth={2}
-                  dot={{ r: 3, fill: '#1E3A5F', strokeWidth: 0 }} />
+                <Radar dataKey="avg" stroke={theme} fill={theme} fillOpacity={0.2} strokeWidth={2}
+                  dot={{ r: 3, fill: theme, strokeWidth: 0 }} />
                 <Tooltip contentStyle={{ borderRadius: 8, fontSize: 12 }} formatter={(v: number | undefined) => [`${v ?? 0}%`, 'Avg Score']} />
               </RadarChart>
             </ResponsiveContainer>
@@ -248,7 +250,7 @@ function ReportView({
                 <div key={d.subject} className="flex items-center gap-3">
                   <span className="text-xs w-20 truncate text-gray-500">{d.subject}</span>
                   <div className="flex-1 h-2 rounded-full bg-gray-100">
-                    <div className="h-full rounded-full" style={{ width: `${d.avg}%`, backgroundColor: '#1E3A5F' }} />
+                    <div className="h-full rounded-full" style={{ width: `${d.avg}%`, backgroundColor: theme }} />
                   </div>
                   <span className="text-xs font-semibold w-10 text-right text-gray-700">{d.avg}%</span>
                 </div>
@@ -274,7 +276,7 @@ function ReportView({
                 <XAxis dataKey="name" tick={{ fontSize: 9, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                 <YAxis domain={[0, 100]} tick={{ fontSize: 9, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                 <Tooltip contentStyle={{ borderRadius: 8, fontSize: 12 }} formatter={(v: number | undefined) => [`${v ?? 0}%`, 'Score']} />
-                <Line type="monotone" dataKey="pct" stroke="#1E3A5F" strokeWidth={2} dot={{ r: 3, fill: '#1E3A5F' }} activeDot={{ r: 5 }} />
+                <Line type="monotone" dataKey="pct" stroke={theme} strokeWidth={2} dot={{ r: 3, fill: theme }} activeDot={{ r: 5 }} />
               </LineChart>
             </ResponsiveContainer>
           ) : (
@@ -289,7 +291,7 @@ function ReportView({
           <h3 className="text-sm font-semibold mb-3 text-gray-500">Subject Breakdown</h3>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
             {subjectStats.map(subj => {
-              const pctColor = (subj.avgPercentile ?? 0) >= 75 ? '#16A34A' : (subj.avgPercentile ?? 0) >= 50 ? '#1E3A5F' : (subj.avgPercentile ?? 0) >= 25 ? '#D97706' : '#DC2626'
+              const pctColor = (subj.avgPercentile ?? 0) >= 75 ? '#16A34A' : (subj.avgPercentile ?? 0) >= 50 ? theme : (subj.avgPercentile ?? 0) >= 25 ? '#D97706' : '#DC2626'
               return (
                 <div key={subj.id} className="rounded-xl p-4" style={card}>
                   <div className="text-xs font-semibold truncate mb-2 text-gray-600">{subj.name}</div>
@@ -382,7 +384,7 @@ function ReportView({
 }
 
 // ── Main portal client ─────────────────────────────────────────────────────────
-export default function PortalClient({ classes }: Props) {
+export default function PortalClient({ classes, theme }: Props) {
   const [step, setStep] = useState<Step>('class')
   const [selectedClassId, setSelectedClassId] = useState('')
   const [selectedClassName, setSelectedClassName] = useState('')
@@ -452,17 +454,17 @@ export default function PortalClient({ classes }: Props) {
         <div className="max-w-lg mx-auto space-y-4">
           {/* Step progress */}
           <div className="flex items-center gap-2 mb-2 flex-wrap">
-            <StepBadge n={1} label="Select class" active={step === 'class'} done={stepsDone.class} />
+            <StepBadge n={1} label="Select class" active={step === 'class'} done={stepsDone.class} theme={theme} />
             <ChevronRight size={14} className="text-gray-300" />
-            <StepBadge n={2} label="Select your name" active={step === 'student'} done={stepsDone.student} />
+            <StepBadge n={2} label="Select your name" active={step === 'student'} done={stepsDone.student} theme={theme} />
             <ChevronRight size={14} className="text-gray-300" />
-            <StepBadge n={3} label="Enter your code" active={step === 'code'} done={stepsDone.code} />
+            <StepBadge n={3} label="Enter your code" active={step === 'code'} done={stepsDone.code} theme={theme} />
           </div>
 
       {/* Step 1: Class */}
       {step === 'class' && (
         <Card>
-          <h2 className="text-lg font-bold mb-1" style={{ color: '#1E3A5F' }}>Welcome to the Student Portal</h2>
+          <h2 className="text-lg font-bold mb-1" style={{ color: theme }}>Welcome to the Student Portal</h2>
           <p className="text-sm text-gray-400 mb-6">View your personal performance report. Select your class to get started.</p>
           <label className="block text-xs font-semibold mb-1.5 text-gray-500 uppercase tracking-wide">Your Class</label>
           <select
@@ -478,7 +480,7 @@ export default function PortalClient({ classes }: Props) {
             onClick={handleClassContinue}
             disabled={!selectedClassId || loading}
             className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity disabled:opacity-40"
-            style={{ backgroundColor: '#1E3A5F' }}
+            style={{ backgroundColor: theme }}
           >
             {loading ? <span className="flex items-center justify-center gap-2"><Loader2 size={14} className="animate-spin" /> Loading…</span> : 'Continue →'}
           </button>
@@ -488,7 +490,7 @@ export default function PortalClient({ classes }: Props) {
       {/* Step 2: Student name */}
       {step === 'student' && (
         <Card>
-          <h2 className="text-lg font-bold mb-1" style={{ color: '#1E3A5F' }}>{selectedClassName}</h2>
+          <h2 className="text-lg font-bold mb-1" style={{ color: theme }}>{selectedClassName}</h2>
           <p className="text-sm text-gray-400 mb-6">Select your name from the list below.</p>
           <label className="block text-xs font-semibold mb-1.5 text-gray-500 uppercase tracking-wide">Your Name</label>
           <select
@@ -508,7 +510,7 @@ export default function PortalClient({ classes }: Props) {
               onClick={handleStudentContinue}
               disabled={!selectedStudentId}
               className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
-              style={{ backgroundColor: '#1E3A5F' }}
+              style={{ backgroundColor: theme }}
             >
               Continue →
             </button>
@@ -519,7 +521,7 @@ export default function PortalClient({ classes }: Props) {
       {/* Step 3: Code */}
       {step === 'code' && (
         <Card>
-          <h2 className="text-lg font-bold mb-1" style={{ color: '#1E3A5F' }}>Enter Your Access Code</h2>
+          <h2 className="text-lg font-bold mb-1" style={{ color: theme }}>Enter Your Access Code</h2>
           <p className="text-sm text-gray-400 mb-6">Enter the 6-character code sent to you by your teacher.</p>
           <form onSubmit={handleCodeSubmit}>
             <label className="block text-xs font-semibold mb-1.5 text-gray-500 uppercase tracking-wide">Access Code</label>
@@ -536,7 +538,7 @@ export default function PortalClient({ classes }: Props) {
                   border: `1.5px solid ${error ? '#DC2626' : '#e5e7eb'}`,
                   outline: 'none',
                   backgroundColor: '#f8fafc',
-                  color: '#1E3A5F',
+                  color: theme,
                   letterSpacing: '0.3em',
                 }}
               />
@@ -557,7 +559,7 @@ export default function PortalClient({ classes }: Props) {
                 type="submit"
                 disabled={code.trim().length < 6 || loading}
                 className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
-                style={{ backgroundColor: '#1E3A5F' }}
+                style={{ backgroundColor: theme }}
               >
                 {loading ? <span className="flex items-center justify-center gap-2"><Loader2 size={14} className="animate-spin" /> Verifying…</span> : 'View My Report →'}
               </button>
@@ -584,6 +586,7 @@ export default function PortalClient({ classes }: Props) {
             classPassingPct={reportData.cls.default_passing_pct}
             subjects={reportData.subjects as SubjectRow[]}
             className={reportData.cls.name}
+            theme={theme}
           />
         </div>
       )}

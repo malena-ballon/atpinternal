@@ -1,9 +1,9 @@
 import Image from 'next/image'
-import { getPortalClasses } from '@/app/actions'
+import { getPortalClasses, getPortalTheme } from '@/app/actions'
 import PortalClient from './PortalClient'
 
 export default async function StudentPortalPage() {
-  const classes = await getPortalClasses()
+  const [classes, theme] = await Promise.all([getPortalClasses(), getPortalTheme()])
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#f1f5f9' }}>
@@ -19,7 +19,7 @@ export default async function StudentPortalPage() {
       </header>
 
       <main className="max-w-5xl mx-auto px-6 py-10">
-        <PortalClient classes={classes} />
+        <PortalClient classes={classes} theme={theme} />
       </main>
     </div>
   )
