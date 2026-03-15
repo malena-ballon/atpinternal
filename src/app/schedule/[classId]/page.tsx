@@ -11,7 +11,7 @@ export default async function PublicSchedulePage({ params }: { params: Promise<{
   const [{ data: cls }, { data: sessions }, { data: clsExtra }, { data: classSubjects }] = await Promise.all([
     supabase.from('classes').select('id, name, status').eq('id', classId).single(),
     supabase.from('sessions')
-      .select('id, date, start_time, end_time, status, topic, subject_ids, subjects(name)')
+      .select('id, date, start_time, end_time, status, topic, subject_ids, is_assessment, subjects(name)')
       .eq('class_id', classId)
       .in('status', ['scheduled', 'in_progress', 'completed'])
       .order('date')
@@ -94,7 +94,7 @@ export default async function PublicSchedulePage({ params }: { params: Promise<{
         ) : (
           <>
             <PublicSessionsTable
-              sessions={sessions as unknown as { id: string; date: string; start_time: string; end_time: string; status: string; topic?: string | null; subject_ids?: string[] | null; subjects?: { name: string } | null }[]}
+              sessions={sessions as unknown as { id: string; date: string; start_time: string; end_time: string; status: string; topic?: string | null; subject_ids?: string[] | null; is_assessment?: boolean | null; subjects?: { name: string } | null }[]}
               subjects={subjects}
             />
           </>

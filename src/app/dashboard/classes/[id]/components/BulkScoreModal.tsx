@@ -100,6 +100,8 @@ export default function BulkScoreModal({ exam, classId, className, classStudents
   const [totalWarning, setTotalWarning] = useState('')
   const [sel, setSel] = useState<Sel | null>(null)
   const anchorRef = useRef<{ r: number; c: number } | null>(null)
+  const [activeCell, setActiveCell] = useState<{ r: number; c: number } | null>(null)
+  const tableRef = useRef<HTMLDivElement>(null)
   const [showCleanupDialog, setShowCleanupDialog] = useState(false)
   const [cleanupRowIdxs, setCleanupRowIdxs] = useState<number[]>([])
 
@@ -130,19 +132,34 @@ export default function BulkScoreModal({ exam, classId, className, classStudents
           const lines = text.trimEnd().split('\n')
           setGridRows(prev => {
             const next = [...prev]
-            for (let ri = 0; ri < lines.length; ri++) {
-              const rowIdx = r1 + ri
-              if (rowIdx >= next.length) next.push(makeEmptyRow())
-              const cols = lines[ri].split('\t')
-              const row = { ...next[rowIdx], scores: [...next[rowIdx].scores] }
-              for (let ci = 0; ci < cols.length; ci++) {
-                const col = c1 + ci
-                const val = cols[ci].trim()
-                if (col === 0) row.name = val
-                else if (col === 1) row.email = val
-                else if (col - 2 < scoreColCount) row.scores[col - 2] = val
+            const isSingleValue = lines.length === 1 && !lines[0].includes('\t')
+            if (isSingleValue) {
+              // Fill entire selection with single copied value
+              const val = lines[0].trim()
+              for (let ri = r1; ri <= r2; ri++) {
+                const row = { ...next[ri], scores: [...next[ri].scores] }
+                for (let ci = c1; ci <= c2; ci++) {
+                  if (ci === 0) row.name = val
+                  else if (ci === 1) row.email = val
+                  else if (ci - 2 < scoreColCount) row.scores[ci - 2] = val
+                }
+                next[ri] = row
               }
-              next[rowIdx] = row
+            } else {
+              for (let ri = 0; ri < lines.length; ri++) {
+                const rowIdx = r1 + ri
+                if (rowIdx >= next.length) next.push(makeEmptyRow())
+                const cols = lines[ri].split('\t')
+                const row = { ...next[rowIdx], scores: [...next[rowIdx].scores] }
+                for (let ci = 0; ci < cols.length; ci++) {
+                  const col = c1 + ci
+                  const val = cols[ci].trim()
+                  if (col === 0) row.name = val
+                  else if (col === 1) row.email = val
+                  else if (col - 2 < scoreColCount) row.scores[col - 2] = val
+                }
+                next[rowIdx] = row
+              }
             }
             return next
           })
@@ -155,6 +172,7 @@ export default function BulkScoreModal({ exam, classId, className, classStudents
   }, [sel, gridRows, preview])
 
   function cellMouseDown(r: number, c: number, e: React.MouseEvent) {
+    if (activeCell && (activeCell.r !== r || activeCell.c !== c)) setActiveCell(null)
     if (e.shiftKey && anchorRef.current) {
       setSel({ r1: anchorRef.current.r, r2: r, c1: anchorRef.current.c, c2: c })
     } else {
@@ -162,6 +180,65 @@ export default function BulkScoreModal({ exam, classId, className, classStudents
       setSel({ r1: r, r2: r, c1: c, c2: c })
     }
   }
+
+  // Focus the active cell's input after render
+  useEffect(() => {
+    if (!activeCell) return
+    const key = `${activeCell.r}-${activeCell.c}`
+    requestAnimationFrame(() => {
+      const el = tableRef.current?.querySelector<HTMLInputElement>(`[data-cell="${key}"] input`)
+      if (el) { el.focus(); el.select() }
+    })
+  }, [activeCell])
+
+  // Escape → deactivate; Delete/Backspace → clear; printable key → activate + replace
+  useEffect(() => {
+    if (preview) return
+    function handle(e: KeyboardEvent) {
+      if (e.key === 'Escape') { setActiveCell(null); return }
+      if ((e.key === 'Backspace' || e.key === 'Delete') && sel) {
+        const el = document.activeElement
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return
+        e.preventDefault()
+        const r1 = Math.min(sel.r1, sel.r2), r2 = Math.max(sel.r1, sel.r2)
+        const c1 = Math.min(sel.c1, sel.c2), c2 = Math.max(sel.c1, sel.c2)
+        setGridRows(prev => {
+          const next = [...prev]
+          for (let r = r1; r <= r2; r++) {
+            if (!next[r]) continue
+            const row = { ...next[r], scores: [...next[r].scores] }
+            for (let c = c1; c <= c2; c++) {
+              if (c === 0) row.name = ''
+              else if (c === 1) row.email = ''
+              else if (c - 2 < scoreColCount) row.scores[c - 2] = ''
+            }
+            next[r] = row
+          }
+          return next
+        })
+        return
+      }
+      if (!sel || e.altKey || e.metaKey || e.ctrlKey || e.key?.length !== 1) return
+      const el = document.activeElement
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return
+      const r1 = Math.min(sel.r1, sel.r2), r2 = Math.max(sel.r1, sel.r2)
+      const c1 = Math.min(sel.c1, sel.c2), c2 = Math.max(sel.c1, sel.c2)
+      if (r1 !== r2 || c1 !== c2) return
+      e.preventDefault()
+      setGridRows(prev => {
+        const next = [...prev]
+        const row = { ...next[r1], scores: [...next[r1].scores] }
+        if (c1 === 0) row.name = e.key
+        else if (c1 === 1) row.email = e.key
+        else if (c1 - 2 < scoreColCount) row.scores[c1 - 2] = e.key
+        next[r1] = row
+        return next
+      })
+      setActiveCell({ r: r1, c: c1 })
+    }
+    document.addEventListener('keydown', handle)
+    return () => document.removeEventListener('keydown', handle)
+  }, [preview, sel, scoreColCount])
 
   function inSel(r: number, c: number) {
     if (!sel) return false
@@ -404,7 +481,7 @@ export default function BulkScoreModal({ exam, classId, className, classStudents
           )}
 
           {/* Spreadsheet grid */}
-          <div className="rounded-xl" style={{ border: '1px solid var(--color-border)', maxHeight: 420, overflowX: 'auto', overflowY: 'auto' }}>
+          <div ref={tableRef} className="rounded-xl" style={{ border: '1px solid var(--color-border)', maxHeight: 420, overflowX: 'auto', overflowY: 'auto' }}>
             <table className="text-sm border-collapse" style={{ width: '100%', minWidth: `${36 + 140 + 200 + scoreColCount * 130}px` }}>
               <thead>
                 <tr style={{ backgroundColor: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)', position: 'sticky', top: 0, zIndex: 1 }}>
@@ -443,36 +520,60 @@ export default function BulkScoreModal({ exam, classId, className, classStudents
                       style={{ color: 'var(--color-text-muted)', borderRight: '1px solid var(--color-border)' }}>
                       {i + 1}
                     </td>
-                    <td style={{ borderRight: '1px solid var(--color-border)', padding: 0, ...cs(i, 0) }}
-                      onMouseDown={e => cellMouseDown(i, 0, e)}>
-                      <input
-                        style={cellInputStyle}
-                        value={row.name}
-                        onChange={e => updateCell(i, 'name', e.target.value)}
-                        onPaste={e => handleCellPaste(i, 0, e)}
-                        placeholder={i < 2 ? 'Juan Dela Cruz' : ''}
-                      />
-                    </td>
-                    <td style={{ borderRight: '1px solid var(--color-border)', padding: 0, ...cs(i, 1) }}
-                      onMouseDown={e => cellMouseDown(i, 1, e)}>
-                      <input
-                        style={cellInputStyle}
-                        value={row.email}
-                        onChange={e => updateCell(i, 'email', e.target.value)}
-                        onPaste={e => handleCellPaste(i, 1, e)}
-                        placeholder={i < 2 ? 'juan@email.com' : ''}
-                      />
-                    </td>
-                    {Array.from({ length: scoreColCount }, (_, ci) => (
-                      <td key={ci} style={{ borderRight: ci < scoreColCount - 1 ? '1px solid var(--color-border)' : 'none', padding: 0, ...cs(i, 2 + ci) }}
-                        onMouseDown={e => cellMouseDown(i, 2 + ci, e)}>
+                    <td data-cell={`${i}-0`} style={{ borderRight: '1px solid var(--color-border)', padding: 0, ...cs(i, 0) }}
+                      onMouseDown={e => cellMouseDown(i, 0, e)}
+                      onDoubleClick={() => setActiveCell({ r: i, c: 0 })}>
+                      {activeCell?.r === i && activeCell?.c === 0 ? (
                         <input
                           style={cellInputStyle}
-                          value={row.scores[ci] ?? ''}
-                          onChange={e => updateScore(i, ci, e.target.value)}
-                          onPaste={e => handleCellPaste(i, 2 + ci, e)}
-                          placeholder={i < 2 ? '25 / 50' : ''}
+                          value={row.name}
+                          onChange={e => updateCell(i, 'name', e.target.value)}
+                          onPaste={e => handleCellPaste(i, 0, e)}
+                          onBlur={() => setActiveCell(null)}
+                          placeholder={i < 2 ? 'Juan Dela Cruz' : ''}
                         />
+                      ) : (
+                        <div style={{ ...cellInputStyle, userSelect: 'none', minHeight: '28px', display: 'flex', alignItems: 'center' }}>
+                          {row.name || (i < 2 ? <span style={{ opacity: 0.35 }}>Juan Dela Cruz</span> : '')}
+                        </div>
+                      )}
+                    </td>
+                    <td data-cell={`${i}-1`} style={{ borderRight: '1px solid var(--color-border)', padding: 0, ...cs(i, 1) }}
+                      onMouseDown={e => cellMouseDown(i, 1, e)}
+                      onDoubleClick={() => setActiveCell({ r: i, c: 1 })}>
+                      {activeCell?.r === i && activeCell?.c === 1 ? (
+                        <input
+                          style={cellInputStyle}
+                          value={row.email}
+                          onChange={e => updateCell(i, 'email', e.target.value)}
+                          onPaste={e => handleCellPaste(i, 1, e)}
+                          onBlur={() => setActiveCell(null)}
+                          placeholder={i < 2 ? 'juan@email.com' : ''}
+                        />
+                      ) : (
+                        <div style={{ ...cellInputStyle, userSelect: 'none', minHeight: '28px', display: 'flex', alignItems: 'center' }}>
+                          {row.email || (i < 2 ? <span style={{ opacity: 0.35 }}>juan@email.com</span> : '')}
+                        </div>
+                      )}
+                    </td>
+                    {Array.from({ length: scoreColCount }, (_, ci) => (
+                      <td key={ci} data-cell={`${i}-${2 + ci}`} style={{ borderRight: ci < scoreColCount - 1 ? '1px solid var(--color-border)' : 'none', padding: 0, ...cs(i, 2 + ci) }}
+                        onMouseDown={e => cellMouseDown(i, 2 + ci, e)}
+                        onDoubleClick={() => setActiveCell({ r: i, c: 2 + ci })}>
+                        {activeCell?.r === i && activeCell?.c === 2 + ci ? (
+                          <input
+                            style={cellInputStyle}
+                            value={row.scores[ci] ?? ''}
+                            onChange={e => updateScore(i, ci, e.target.value)}
+                            onPaste={e => handleCellPaste(i, 2 + ci, e)}
+                            onBlur={() => setActiveCell(null)}
+                            placeholder={i < 2 ? '25 / 50' : ''}
+                          />
+                        ) : (
+                          <div style={{ ...cellInputStyle, userSelect: 'none', minHeight: '28px', display: 'flex', alignItems: 'center' }}>
+                            {row.scores[ci] || (i < 2 ? <span style={{ opacity: 0.35 }}>25 / 50</span> : '')}
+                          </div>
+                        )}
                       </td>
                     ))}
                   </tr>

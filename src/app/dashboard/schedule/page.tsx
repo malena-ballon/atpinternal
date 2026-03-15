@@ -147,7 +147,7 @@ function ScheduleContent() {
     const supabase = createClient()
     Promise.all([
       supabase.from('sessions')
-        .select('id, date, start_time, end_time, status, student_count, notes, zoom_link, topic, class_id, subject_id, subject_ids, teacher_id, subjects(name), teachers(name), classes(name)')
+        .select('id, date, start_time, end_time, status, student_count, notes, zoom_link, topic, class_id, subject_id, subject_ids, is_assessment, teacher_id, subjects(name), teachers(name), classes(name)')
         .order('date', { ascending: false })
         .order('start_time'),
       supabase.from('classes').select('id, name, status, zoom_link, description, default_passing_pct, created_at, updated_at').eq('status', 'active'),

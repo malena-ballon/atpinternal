@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 function fmt12(t: string): string {
   if (!t || !/^\d{2}:\d{2}$/.test(t)) return ''
@@ -54,6 +54,20 @@ export default function TimeInput({ value, onChange, placeholder = '3:00 PM' }: 
   const [local, setLocal] = useState(() => fmt12(value))
 
   useEffect(() => { setLocal(fmt12(value)) }, [value])
+
+  // Keep stable refs so the unmount cleanup always sees the latest values
+  const localRef = useRef(local)
+  const onChangeRef = useRef(onChange)
+  useEffect(() => { localRef.current = local }, [local])
+  useEffect(() => { onChangeRef.current = onChange }, [onChange])
+
+  // Commit pending typed value when the component unmounts (e.g., cell deactivated by single-click)
+  useEffect(() => {
+    return () => {
+      const parsed = parse12(localRef.current)
+      if (parsed) onChangeRef.current(parsed)
+    }
+  }, [])
 
   const h24 = value && /^\d{2}:\d{2}$/.test(value) ? parseInt(value.split(':')[0]) : -1
   const isPM = h24 >= 12

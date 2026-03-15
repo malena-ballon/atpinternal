@@ -129,10 +129,13 @@ function sessionToRow(s: SessionRow): DraftRow {
     _key: s.id, id: s.id,
     class_id: s.class_id,
     date: s.date,
-    start_time: s.start_time.slice(0, 5),
-    end_time: s.end_time.slice(0, 5),
+    start_time: s.start_time?.slice(0, 5) ?? '',
+    end_time: s.end_time?.slice(0, 5) ?? '',
     teacher_id: s.teacher_id ?? '',
-    subject_ids: s.subject_ids?.length ? s.subject_ids : s.subject_id ? [s.subject_id] : [],
+    subject_ids: [
+      ...(s.subject_ids?.length ? s.subject_ids : s.subject_id ? [s.subject_id] : []),
+      ...((s as SessionRow & { is_assessment?: boolean }).is_assessment ? ['__assessment__'] : []),
+    ],
     topic: s.topic ?? '',
     status: s.status as SessionStatus,
     student_count: s.student_count ?? 0,
@@ -187,6 +190,8 @@ export default function ScheduleTable({
   const savedSnapshot = useRef<DraftRow[]>([])
   const [sel, setSel] = useState<Sel | null>(null)
   const anchorRef = useRef<{ r: number; c: number } | null>(null)
+  const [activeCell, setActiveCell] = useState<{ r: number; c: number } | null>(null)
+  const tableRef = useRef<HTMLDivElement>(null)
   const [openSubjectKey, setOpenSubjectKey] = useState<string | null>(null)
   const [subjectDropPos, setSubjectDropPos] = useState<{ top: number; left: number } | null>(null)
   const [expandedTopicKeys, setExpandedTopicKeys] = useState<Set<string>>(new Set())
@@ -208,7 +213,7 @@ export default function ScheduleTable({
     if (c === 5) return teachers.find(t => t.id === row.teacher_id)?.name ?? '—'
     if (c === 6) {
       const subs = subjectsByClass.get(row.class_id) ?? []
-      return row.subject_ids.map(id => subs.find(s => s.id === id)?.name ?? id).join(', ') || '—'
+      return row.subject_ids.map(id => id === '__assessment__' ? 'Assessment' : subs.find(s => s.id === id)?.name ?? id).join(', ') || '—'
     }
     if (c === 7) return row.topic
     if (c === 8) return STATUS_OPTIONS.find(o => o.value === row.status)?.label ?? row.status
@@ -232,12 +237,13 @@ export default function ScheduleTable({
     }
     if (c === 6) {
       const subs = subjectsByClass.get(row.class_id) ?? []
-      const match = subs.find(s => s.name.toLowerCase() === v.toLowerCase())
-      if (!match) return {}
-      const ids = row.subject_ids.includes(match.id)
-        ? row.subject_ids.filter(id => id !== match.id)
-        : [...row.subject_ids, match.id]
-      return { subject_ids: ids }
+      const ASSESSMENT_ID = '__assessment__'
+      const names = v.split(',').map(s => s.trim().toLowerCase())
+      const ids = names.map(n => {
+        if (n === 'assessment') return ASSESSMENT_ID
+        return subs.find(s => s.name.toLowerCase() === n)?.id
+      }).filter(Boolean) as string[]
+      return ids.length > 0 ? { subject_ids: ids } : {}
     }
     if (c === 7) return { topic: v }
     if (c === 8) {
@@ -328,6 +334,7 @@ export default function ScheduleTable({
   }, [sel, sessions, rows, editMode])
 
   function cellMouseDown(r: number, c: number, e: React.MouseEvent) {
+    if (activeCell && (activeCell.r !== r || activeCell.c !== c)) setActiveCell(null)
     if (e.shiftKey && anchorRef.current) {
       setSel({ r1: anchorRef.current.r, r2: r, c1: anchorRef.current.c, c2: c })
     } else {
@@ -335,6 +342,63 @@ export default function ScheduleTable({
       setSel({ r1: r, r2: r, c1: c, c2: c })
     }
   }
+
+  // Focus the active cell's input after render
+  useEffect(() => {
+    if (!activeCell) return
+    const key = `${activeCell.r}-${activeCell.c}`
+    requestAnimationFrame(() => {
+      const el = tableRef.current?.querySelector<HTMLInputElement>(`[data-cell="${key}"] input:not([type="date"]):not([type="checkbox"])`)
+      if (el) { el.focus(); el.select() }
+    })
+  }, [activeCell])
+
+  // Escape → deactivate; Delete/Backspace → clear; printable key → activate + replace
+  useEffect(() => {
+    if (!editMode) return
+    function handle(e: KeyboardEvent) {
+      if (e.key === 'Escape') { setActiveCell(null); return }
+      if ((e.key === 'Backspace' || e.key === 'Delete') && sel) {
+        const el = document.activeElement
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return
+        e.preventDefault()
+        const r1 = Math.min(sel.r1, sel.r2), r2 = Math.max(sel.r1, sel.r2)
+        const c1 = Math.min(sel.c1, sel.c2), c2 = Math.max(sel.c1, sel.c2)
+        setRows(prev => {
+          const next = [...prev]
+          for (let r = r1; r <= r2; r++) {
+            if (!next[r]) continue
+            const row = { ...next[r], _dirty: true }
+            for (let c = c1; c <= c2; c++) {
+              if (c === 0) row.date = ''
+              else if (c === 2) row.start_time = ''
+              else if (c === 3) row.end_time = ''
+              else if (c === 5) row.teacher_id = ''
+              else if (c === 6) row.subject_ids = []
+              else if (c === 7) row.topic = ''
+            }
+            if (!row._statusLocked && (c1 <= 3)) row.status = autoStatus(row.date, row.start_time, row.end_time)
+            next[r] = row
+          }
+          return next
+        })
+        return
+      }
+      if (!sel || e.altKey || e.metaKey || e.ctrlKey || e.key?.length !== 1) return
+      const el = document.activeElement
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return
+      const r1 = Math.min(sel.r1, sel.r2), r2 = Math.max(sel.r1, sel.r2)
+      const c1 = Math.min(sel.c1, sel.c2), c2 = Math.max(sel.c1, sel.c2)
+      if (r1 !== r2 || c1 !== c2) return
+      if (![0, 2, 3].includes(c1)) return // date (0), start time (2), end time (3)
+      e.preventDefault()
+      // Only replace content for the text-input date column; TimeInput just activates
+      if (c1 === 0) setRows(prev => prev.map((row, ri) => ri === r1 ? { ...row, date: e.key, _dirty: true } : row))
+      setActiveCell({ r: r1, c: c1 })
+    }
+    document.addEventListener('keydown', handle)
+    return () => document.removeEventListener('keydown', handle)
+  }, [editMode, sel])
 
   function inSel(r: number, c: number) {
     if (!sel) return false
@@ -400,9 +464,17 @@ export default function ScheduleTable({
   }
 
   async function doSave(rowsToSave: typeof rows) {
+    const invalidRows: number[] = []
+    rowsToSave.forEach((r, i) => {
+      if (r.date && !/^\d{4}-\d{2}-\d{2}$/.test(r.date)) invalidRows.push(i + 1)
+    })
+    if (invalidRows.length > 0) {
+      setSaveError(`Row${invalidRows.length > 1 ? 's' : ''} ${invalidRows.join(', ')}: invalid date. Use M/D/YYYY format.`)
+      return
+    }
     setSaving(true); setSaveError('')
     const supabase = createClient()
-    const toInsert = rowsToSave.filter(r => r._isNew && r.date && r.start_time && r.end_time)
+    const toInsert = rowsToSave.filter(r => r._isNew && r.date)
     const toUpdate = rowsToSave.filter(r => !r._isNew && r._dirty && r.id)
 
     try {
@@ -413,23 +485,30 @@ export default function ScheduleTable({
 
       if (toInsert.length > 0) {
         const { error } = await supabase.from('sessions').insert(
-          toInsert.map(r => ({
-            class_id: r.class_id, date: r.date, start_time: r.start_time, end_time: r.end_time,
-            teacher_id: r.teacher_id || null,
-            subject_ids: r.subject_ids,
-            subject_id: r.subject_ids[0] || null,
-            topic: r.topic || null, status: r.status,
+          toInsert.map(r => {
+            const dbSubIds = r.subject_ids.filter(id => id !== '__assessment__')
+            const isAssessment = r.subject_ids.includes('__assessment__')
+            return {
+              class_id: r.class_id, date: r.date, start_time: r.start_time || null, end_time: r.end_time || null,
+              teacher_id: r.teacher_id || null,
+              subject_ids: dbSubIds,
+              subject_id: dbSubIds[0] || null,
+              is_assessment: isAssessment,
+              topic: r.topic || null, status: r.status,
+            }
           }))
-        )
         if (error) throw error
       }
 
       for (const r of toUpdate) {
+        const dbSubIds = r.subject_ids.filter(id => id !== '__assessment__')
+        const isAssessment = r.subject_ids.includes('__assessment__')
         const { error } = await supabase.from('sessions').update({
-          date: r.date, start_time: r.start_time, end_time: r.end_time,
+          date: r.date, start_time: r.start_time || null, end_time: r.end_time || null,
           teacher_id: r.teacher_id || null,
-          subject_ids: r.subject_ids,
-          subject_id: r.subject_ids[0] || null,
+          subject_ids: dbSubIds,
+          subject_id: dbSubIds[0] || null,
+          is_assessment: isAssessment,
           topic: r.topic || null, status: r.status,
         }).eq('id', r.id!)
         if (error) throw error
@@ -439,7 +518,7 @@ export default function ScheduleTable({
       const changedIds = toUpdate.map(r => r.id!)
       if (changedIds.length > 0) {
         const { data: fresh } = await supabase.from('sessions')
-          .select('id, date, start_time, end_time, status, student_count, notes, zoom_link, topic, class_id, subject_id, subject_ids, teacher_id, subjects(name), teachers(name), classes(name)')
+          .select('id, date, start_time, end_time, status, student_count, notes, zoom_link, topic, class_id, subject_id, subject_ids, is_assessment, teacher_id, subjects(name), teachers(name), classes(name)')
           .in('id', changedIds)
         if (fresh) onSessionsChanged(fresh as unknown as SessionRow[])
       }
@@ -447,7 +526,7 @@ export default function ScheduleTable({
       // Reload all sessions if there were inserts or deletes
       if (toInsert.length > 0 || deletedIds.size > 0) {
         const { data: allFresh } = await supabase.from('sessions')
-          .select('id, date, start_time, end_time, status, student_count, notes, zoom_link, topic, class_id, subject_id, subject_ids, teacher_id, subjects(name), teachers(name), classes(name)')
+          .select('id, date, start_time, end_time, status, student_count, notes, zoom_link, topic, class_id, subject_id, subject_ids, is_assessment, teacher_id, subjects(name), teachers(name), classes(name)')
           .order('date', { ascending: false }).order('start_time')
         if (allFresh) onSessionsChanged(allFresh as unknown as SessionRow[])
       }
@@ -672,6 +751,7 @@ export default function ScheduleTable({
 
       {/* Table */}
       <div
+        ref={tableRef}
         className="rounded-2xl overflow-x-auto"
         style={{ border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface)' }}
       >
@@ -732,7 +812,7 @@ export default function ScheduleTable({
                         {(() => {
                           const classSubjects = subjectsByClass.get(s.class_id) ?? []
                           const ids = s.subject_ids?.length ? s.subject_ids : s.subject_id ? [s.subject_id] : []
-                          const names = ids.map(id => classSubjects.find(sub => sub.id === id)?.name ?? s.subjects?.name).filter(Boolean) as string[]
+                          const names = ids.map(id => id === '__assessment__' ? 'Assessment' : classSubjects.find(sub => sub.id === id)?.name ?? s.subjects?.name).filter(Boolean) as string[]
                           return names.length > 0
                             ? <div className="flex flex-wrap gap-1">{names.map((n, ni) => <span key={ni} className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: 'rgba(11,181,199,0.1)', color: '#0BB5C7' }}>{n}</span>)}</div>
                             : <span style={{ color: 'var(--color-text-muted)' }}>—</span>
@@ -811,25 +891,36 @@ export default function ScheduleTable({
                         <td className="px-3 py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)', width: '36px' }}>{i + 1}</td>
 
                         {/* Date */}
-                        <td className="px-2 py-1.5" style={{ minWidth: '160px', ...cs(i, 0) }}
-                          onMouseDown={e => cellMouseDown(i, 0, e)}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <input type="text"
-                              value={row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? format(parseISO(row.date), 'M/d/yyyy') : row.date}
-                              placeholder="M/D/YYYY"
-                              onChange={e => { const p = parseDate(e.target.value); updateRow(row._key, { date: p || e.target.value }) }}
-                              onBlur={e => { const p = parseDate(e.target.value); if (p) updateRow(row._key, { date: p }) }}
-                              style={{ ...cellInput, flex: 1, minWidth: 0 }} />
-                            <label style={{ cursor: 'pointer', lineHeight: 0, flexShrink: 0, position: 'relative' }}>
-                              <input type="date" value={row.date} onChange={e => updateRow(row._key, { date: e.target.value })}
-                                style={{ position: 'absolute', opacity: 0, width: '1px', height: '1px', pointerEvents: 'none' }} tabIndex={-1} />
-                              <CalendarDays size={13} style={{ color: 'var(--color-text-muted)', display: 'block' }}
-                                onClick={e => {
-                                  const inp = (e.currentTarget as unknown as HTMLElement).closest('label')?.querySelector('input[type="date"]') as HTMLInputElement | null
-                                  inp?.showPicker?.()
-                                }} />
-                            </label>
-                          </div>
+                        <td data-cell={`${i}-0`} className="px-2 py-1.5" style={{ minWidth: '160px', ...cs(i, 0) }}
+                          onMouseDown={e => cellMouseDown(i, 0, e)}
+                          onDoubleClick={() => setActiveCell({ r: i, c: 0 })}>
+                          {activeCell?.r === i && activeCell?.c === 0 ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <input type="text"
+                                value={row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? format(parseISO(row.date), 'M/d/yyyy') : row.date}
+                                placeholder="M/D/YYYY"
+                                onChange={e => { const p = parseDate(e.target.value); updateRow(row._key, { date: p || e.target.value }) }}
+                                onBlur={e => { const p = parseDate(e.target.value); if (p) updateRow(row._key, { date: p }); setActiveCell(null) }}
+                                style={{ ...cellInput, flex: 1, minWidth: 0, outline: row.date && !/^\d{4}-\d{2}-\d{2}$/.test(row.date) ? '1.5px solid #EF4444' : 'none', borderRadius: '3px' }} />
+                              <label style={{ cursor: 'pointer', lineHeight: 0, flexShrink: 0, position: 'relative' }}>
+                                <input type="date" value={row.date} onChange={e => updateRow(row._key, { date: e.target.value })}
+                                  style={{ position: 'absolute', opacity: 0, width: '1px', height: '1px', pointerEvents: 'none' }} tabIndex={-1} />
+                                <CalendarDays size={13} style={{ color: 'var(--color-text-muted)', display: 'block' }}
+                                  onClick={e => {
+                                    const inp = (e.currentTarget as unknown as HTMLElement).closest('label')?.querySelector('input[type="date"]') as HTMLInputElement | null
+                                    inp?.showPicker?.()
+                                  }} />
+                              </label>
+                            </div>
+                          ) : (
+                            <div style={{ ...cellInput, userSelect: 'none', minHeight: '20px', outline: row.date && !/^\d{4}-\d{2}-\d{2}$/.test(row.date) ? '1.5px solid #EF4444' : 'none', borderRadius: '3px' }}>
+                              {row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date)
+                                ? format(parseISO(row.date), 'M/d/yyyy')
+                                : row.date
+                                  ? <span style={{ color: '#EF4444' }}>{row.date}</span>
+                                  : <span style={{ opacity: 0.35 }}>M/D/YYYY</span>}
+                            </div>
+                          )}
                         </td>
 
                         {/* Day (auto) */}
@@ -839,15 +930,31 @@ export default function ScheduleTable({
                         </td>
 
                         {/* Start */}
-                        <td className="px-2 py-1.5" style={{ minWidth: '130px', ...cs(i, 2) }}
-                          onMouseDown={e => cellMouseDown(i, 2, e)}>
-                          <TimeInput value={row.start_time} onChange={v => updateRow(row._key, { start_time: v })} />
+                        <td data-cell={`${i}-2`} className="px-2 py-1.5" style={{ minWidth: '130px', ...cs(i, 2) }}
+                          onMouseDown={e => cellMouseDown(i, 2, e)}
+                          onDoubleClick={() => setActiveCell({ r: i, c: 2 })}
+                          onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setActiveCell(null) }}>
+                          {activeCell?.r === i && activeCell?.c === 2 ? (
+                            <TimeInput value={row.start_time} onChange={v => updateRow(row._key, { start_time: v })} />
+                          ) : (
+                            <div style={{ ...cellInput, userSelect: 'none', minHeight: '20px' }}>
+                              {fmt12(row.start_time) || <span style={{ opacity: 0.35 }}>3:00 PM</span>}
+                            </div>
+                          )}
                         </td>
 
                         {/* End */}
-                        <td className="px-2 py-1.5" style={{ minWidth: '130px', ...cs(i, 3) }}
-                          onMouseDown={e => cellMouseDown(i, 3, e)}>
-                          <TimeInput value={row.end_time} onChange={v => updateRow(row._key, { end_time: v })} />
+                        <td data-cell={`${i}-3`} className="px-2 py-1.5" style={{ minWidth: '130px', ...cs(i, 3) }}
+                          onMouseDown={e => cellMouseDown(i, 3, e)}
+                          onDoubleClick={() => setActiveCell({ r: i, c: 3 })}
+                          onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setActiveCell(null) }}>
+                          {activeCell?.r === i && activeCell?.c === 3 ? (
+                            <TimeInput value={row.end_time} onChange={v => updateRow(row._key, { end_time: v })} />
+                          ) : (
+                            <div style={{ ...cellInput, userSelect: 'none', minHeight: '20px' }}>
+                              {fmt12(row.end_time) || <span style={{ opacity: 0.35 }}>5:00 PM</span>}
+                            </div>
+                          )}
                         </td>
 
                         {/* Class (read-only label for existing, dropdown for new) */}
@@ -894,12 +1001,18 @@ export default function ScheduleTable({
                             }}
                             style={{ ...cellInput, textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
                             <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '13px' }}>
-                              {row.subject_ids.length === 0 ? '— Subject —' : row.subject_ids.map(id => rowSubjects.find(s => s.id === id)?.name).filter(Boolean).join(', ')}
+                              {row.subject_ids.length === 0 ? '— Subject —' : row.subject_ids.map(id => id === '__assessment__' ? 'Assessment' : rowSubjects.find(s => s.id === id)?.name).filter(Boolean).join(', ')}
                             </span>
                             <ChevronDown size={11} style={{ flexShrink: 0, color: 'var(--color-text-muted)' }} />
                           </button>
                           {openSubjectKey === row._key && subjectDropPos && (
                             <div style={{ position: 'fixed', top: subjectDropPos.top, left: subjectDropPos.left, zIndex: 150, minWidth: '180px', maxHeight: '180px', overflow: 'auto', backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', boxShadow: '0 8px 24px rgba(0,0,0,0.12)' }}>
+                              <label className="flex items-center gap-2 px-3 py-2 cursor-pointer" style={{ fontSize: '13px', borderBottom: '1px solid var(--color-border)' }}>
+                                <input type="checkbox" checked={row.subject_ids.includes('__assessment__')}
+                                  onChange={e => { e.stopPropagation(); updateRow(row._key, { subject_ids: row.subject_ids.includes('__assessment__') ? row.subject_ids.filter(id => id !== '__assessment__') : [...row.subject_ids, '__assessment__'] }) }}
+                                  style={{ accentColor: '#0BB5C7' }} />
+                                <span style={{ color: 'var(--color-text-primary)', fontStyle: 'italic' }}>Assessment</span>
+                              </label>
                               {rowSubjects.length === 0
                                 ? <p className="px-3 py-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>No subjects for this class</p>
                                 : rowSubjects.map(s => (

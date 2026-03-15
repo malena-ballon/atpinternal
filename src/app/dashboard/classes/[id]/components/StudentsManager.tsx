@@ -89,6 +89,8 @@ export default function StudentsManager({ classId, className, initialStudents }:
   const [q, setQ] = useState('')
   const [sel, setSel] = useState<Sel | null>(null)
   const anchorRef = useRef<{ r: number; c: number } | null>(null)
+  const [activeCell, setActiveCell] = useState<{ r: number; c: number } | null>(null)
+  const tableRef = useRef<HTMLDivElement>(null)
   const savedSnapshot = useRef<DraftRow[]>([])
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
   const [deletingSelected, setDeletingSelected] = useState(false)
@@ -178,6 +180,7 @@ export default function StudentsManager({ classId, className, initialStudents }:
   }, [editMode, sel, rows])
 
   function cellMouseDown(r: number, c: number, e: React.MouseEvent) {
+    if (activeCell && (activeCell.r !== r || activeCell.c !== c)) setActiveCell(null)
     if (e.shiftKey && anchorRef.current) {
       setSel({ r1: anchorRef.current.r, r2: r, c1: anchorRef.current.c, c2: c })
     } else {
@@ -185,6 +188,66 @@ export default function StudentsManager({ classId, className, initialStudents }:
       setSel({ r1: r, r2: r, c1: c, c2: c })
     }
   }
+
+  // Focus the active cell's input after render
+  useEffect(() => {
+    if (!activeCell) return
+    const key = `${activeCell.r}-${activeCell.c}`
+    requestAnimationFrame(() => {
+      const el = tableRef.current?.querySelector<HTMLInputElement>(`[data-cell="${key}"] input:not([type="checkbox"])`)
+      if (el) { el.focus(); el.select() }
+    })
+  }, [activeCell])
+
+  // Escape → deactivate; Delete/Backspace → clear; printable key → activate + replace
+  useEffect(() => {
+    if (!editMode) return
+    function handle(e: KeyboardEvent) {
+      if (e.key === 'Escape') { setActiveCell(null); return }
+      if ((e.key === 'Backspace' || e.key === 'Delete') && sel) {
+        const el = document.activeElement
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return
+        e.preventDefault()
+        const r1 = Math.min(sel.r1, sel.r2), r2 = Math.max(sel.r1, sel.r2)
+        const c1 = Math.min(sel.c1, sel.c2), c2 = Math.max(sel.c1, sel.c2)
+        setRows(prev => {
+          const next = [...prev]
+          for (let r = r1; r <= r2; r++) {
+            if (!next[r]) continue
+            const row = { ...next[r], _dirty: true }
+            for (let c = c1; c <= c2; c++) {
+              if (c === 0) row.name = ''
+              else if (c === 1) row.school = ''
+              else if (c === 2) row.email = ''
+            }
+            next[r] = row
+          }
+          return next
+        })
+        return
+      }
+      if (!sel || e.altKey || e.metaKey || e.ctrlKey || e.key?.length !== 1) return
+      const el = document.activeElement
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return
+      const r1 = Math.min(sel.r1, sel.r2), r2 = Math.max(sel.r1, sel.r2)
+      const c1 = Math.min(sel.c1, sel.c2), c2 = Math.max(sel.c1, sel.c2)
+      if (r1 !== r2 || c1 !== c2) return
+      if (![0, 1, 2].includes(c1)) return
+      e.preventDefault()
+      setRows(prev => {
+        const next = [...prev]
+        const row = { ...next[r1], _dirty: true }
+        if (c1 === 0) row.name = e.key
+        else if (c1 === 1) row.school = e.key
+        else if (c1 === 2) row.email = e.key
+        next[r1] = row
+        return next
+      })
+      setActiveCell({ r: r1, c: c1 })
+    }
+    document.addEventListener('keydown', handle)
+    return () => document.removeEventListener('keydown', handle)
+  }, [editMode, sel])
 
   function inSel(r: number, c: number) {
     if (!sel) return false
@@ -503,7 +566,7 @@ export default function StudentsManager({ classId, className, initialStudents }:
       )}
 
       {/* Table */}
-      <div className="rounded-xl overflow-x-auto" style={{ border: '1px solid var(--color-border)' }}>
+      <div ref={tableRef} className="rounded-xl overflow-x-auto" style={{ border: '1px solid var(--color-border)' }}>
         <table className="w-full" style={{ minWidth: '520px' }}>
           <thead>
             <tr style={{ backgroundColor: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)' }}>
@@ -557,42 +620,66 @@ export default function StudentsManager({ classId, className, initialStudents }:
                   // ── Edit mode ─────────────────────────────────────────────
                   <>
                     {/* Name col=0 */}
-                    <td className="px-2 py-1.5" style={{ minWidth: '180px', ...cellStyle(i, 0, row) }}
-                      onMouseDown={e => cellMouseDown(i, 0, e)}>
-                      <input
-                        type="text"
-                        value={row.name}
-                        placeholder="Full name"
-                        onChange={e => updateRow(row._key, 'name', e.target.value)}
-                        onPaste={e => handleCellPaste(e, row._key, 0)}
-                        style={cellInput}
-                      />
+                    <td data-cell={`${i}-0`} className="px-2 py-1.5" style={{ minWidth: '180px', ...cellStyle(i, 0, row) }}
+                      onMouseDown={e => cellMouseDown(i, 0, e)}
+                      onDoubleClick={() => setActiveCell({ r: i, c: 0 })}>
+                      {activeCell?.r === i && activeCell?.c === 0 ? (
+                        <input
+                          type="text"
+                          value={row.name}
+                          placeholder="Full name"
+                          onChange={e => updateRow(row._key, 'name', e.target.value)}
+                          onPaste={e => handleCellPaste(e, row._key, 0)}
+                          onBlur={() => setActiveCell(null)}
+                          style={cellInput}
+                        />
+                      ) : (
+                        <div style={{ ...cellInput, userSelect: 'none', minHeight: '20px' }}>
+                          {row.name || <span style={{ opacity: 0.35 }}>Full name</span>}
+                        </div>
+                      )}
                     </td>
 
                     {/* School col=1 */}
-                    <td className="px-2 py-1.5" style={{ minWidth: '160px', ...cellStyle(i, 1, row) }}
-                      onMouseDown={e => cellMouseDown(i, 1, e)}>
-                      <input
-                        type="text"
-                        value={row.school}
-                        placeholder="School"
-                        onChange={e => updateRow(row._key, 'school', e.target.value)}
-                        onPaste={e => handleCellPaste(e, row._key, 1)}
-                        style={cellInput}
-                      />
+                    <td data-cell={`${i}-1`} className="px-2 py-1.5" style={{ minWidth: '160px', ...cellStyle(i, 1, row) }}
+                      onMouseDown={e => cellMouseDown(i, 1, e)}
+                      onDoubleClick={() => setActiveCell({ r: i, c: 1 })}>
+                      {activeCell?.r === i && activeCell?.c === 1 ? (
+                        <input
+                          type="text"
+                          value={row.school}
+                          placeholder="School"
+                          onChange={e => updateRow(row._key, 'school', e.target.value)}
+                          onPaste={e => handleCellPaste(e, row._key, 1)}
+                          onBlur={() => setActiveCell(null)}
+                          style={cellInput}
+                        />
+                      ) : (
+                        <div style={{ ...cellInput, userSelect: 'none', minHeight: '20px' }}>
+                          {row.school || <span style={{ opacity: 0.35 }}>School</span>}
+                        </div>
+                      )}
                     </td>
 
                     {/* Email col=2 */}
-                    <td className="px-2 py-1.5" style={{ minWidth: '200px', ...cellStyle(i, 2, row) }}
-                      onMouseDown={e => cellMouseDown(i, 2, e)}>
-                      <input
-                        type="text"
-                        value={row.email}
-                        placeholder="email@example.com"
-                        onChange={e => updateRow(row._key, 'email', e.target.value)}
-                        onPaste={e => handleCellPaste(e, row._key, 2)}
-                        style={{ ...cellInput, fontFamily: 'monospace' }}
-                      />
+                    <td data-cell={`${i}-2`} className="px-2 py-1.5" style={{ minWidth: '200px', ...cellStyle(i, 2, row) }}
+                      onMouseDown={e => cellMouseDown(i, 2, e)}
+                      onDoubleClick={() => setActiveCell({ r: i, c: 2 })}>
+                      {activeCell?.r === i && activeCell?.c === 2 ? (
+                        <input
+                          type="text"
+                          value={row.email}
+                          placeholder="email@example.com"
+                          onChange={e => updateRow(row._key, 'email', e.target.value)}
+                          onPaste={e => handleCellPaste(e, row._key, 2)}
+                          onBlur={() => setActiveCell(null)}
+                          style={{ ...cellInput, fontFamily: 'monospace' }}
+                        />
+                      ) : (
+                        <div style={{ ...cellInput, fontFamily: 'monospace', userSelect: 'none', minHeight: '20px' }}>
+                          {row.email || <span style={{ opacity: 0.35, fontFamily: 'inherit' }}>email@example.com</span>}
+                        </div>
+                      )}
                     </td>
 
                     {/* Delete */}

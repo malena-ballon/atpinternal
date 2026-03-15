@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
-import { Plus, Link2, ExternalLink, Check, Trash2, Loader2, MoreHorizontal, Pencil, Pin, PinOff } from 'lucide-react'
+import { Plus, Link2, ExternalLink, Check, Trash2, Loader2, MoreHorizontal, Pencil, Pin, PinOff, Copy } from 'lucide-react'
 import Link from 'next/link'
 import { createClient } from '@/utils/supabase/client'
 import { logActivity } from '@/app/actions'
@@ -31,10 +31,11 @@ interface DropdownProps {
   onEdit: () => void
   onCopyLink: () => void
   onPin: () => void
+  onDuplicate: () => void
   onDelete: () => void
 }
 
-function ActionDropdown({ cls, pinned, copied, onEdit, onCopyLink, onPin, onDelete }: DropdownProps) {
+function ActionDropdown({ cls, pinned, copied, onEdit, onCopyLink, onPin, onDuplicate, onDelete }: DropdownProps) {
   const [open, setOpen] = useState(false)
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 })
   const btnRef = useRef<HTMLButtonElement>(null)
@@ -118,6 +119,13 @@ function ActionDropdown({ cls, pinned, copied, onEdit, onCopyLink, onPin, onDele
         {pinned ? 'Unpin class' : 'Pin class'}
       </button>
 
+      <button className={item} style={{ color: 'var(--color-text-primary)' }}
+        onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(11,181,199,0.06)')}
+        onMouseLeave={e => (e.currentTarget.style.backgroundColor = '')}
+        onClick={() => { setOpen(false); onDuplicate() }}>
+        <Copy size={14} style={{ color: 'var(--color-text-muted)' }} /> Duplicate class
+      </button>
+
       <div style={{ borderTop: '1px solid var(--color-border)', margin: '4px 8px' }} />
 
       <button className={item} style={{ color: 'var(--color-danger)' }}
@@ -153,6 +161,7 @@ export default function ClassesTable({ initialClasses }: { initialClasses: Class
   const [classes, setClasses] = useState<ClassSummary[]>(initialClasses)
   const [showCreate, setShowCreate] = useState(false)
   const [editTarget, setEditTarget] = useState<ClassRow | null>(null)
+  const [duplicateTarget, setDuplicateTarget] = useState<ClassSummary | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [deletingSelected, setDeletingSelected] = useState(false)
@@ -373,6 +382,7 @@ export default function ClassesTable({ initialClasses }: { initialClasses: Class
                         })}
                         onCopyLink={() => copyLink(cls.id)}
                         onPin={() => togglePin(cls.id)}
+                        onDuplicate={() => setDuplicateTarget(cls)}
                         onDelete={() => handleDeleteOne(cls.id)}
                       />
                     </td>
@@ -401,6 +411,193 @@ export default function ClassesTable({ initialClasses }: { initialClasses: Class
           ))}
         />
       )}
+      {duplicateTarget && (
+        <DuplicateClassModal
+          cls={duplicateTarget}
+          onClose={() => setDuplicateTarget(null)}
+          onDuplicated={newCls => setClasses(prev => [newCls, ...prev])}
+        />
+      )}
     </>
+  )
+}
+
+// ── Duplicate Class Modal ─────────────────────────────────────────────────────
+
+interface DuplicateModalProps {
+  cls: ClassSummary
+  onClose: () => void
+  onDuplicated: (cls: ClassSummary) => void
+}
+
+function DuplicateClassModal({ cls, onClose, onDuplicated }: DuplicateModalProps) {
+  const [name, setName] = useState(`${cls.name} - Copy`)
+  const [copyStudents, setCopyStudents] = useState(true)
+  const [copyExams, setCopyExams] = useState(true)
+  const [copySessions, setCopySessions] = useState(true)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleDuplicate() {
+    if (!name.trim()) { setError('Class name is required.'); return }
+    setLoading(true); setError('')
+    const supabase = createClient()
+    try {
+      // 1. Fetch original class data
+      const [{ data: origClass }, { data: origSubjects }, { data: origStudents }, { data: origExams }, { data: origSessions }] = await Promise.all([
+        supabase.from('classes').select('*').eq('id', cls.id).single(),
+        supabase.from('subjects').select('*').eq('class_id', cls.id),
+        copyStudents ? supabase.from('class_students').select('student_id').eq('class_id', cls.id) : Promise.resolve({ data: [] }),
+        copyExams ? supabase.from('exams').select('*').eq('class_id', cls.id) : Promise.resolve({ data: [] }),
+        copySessions ? supabase.from('sessions').select('*').eq('class_id', cls.id) : Promise.resolve({ data: [] }),
+      ])
+
+      // 2. Insert new class
+      const { data: newClass, error: classErr } = await supabase.from('classes').insert({
+        name: name.trim(),
+        description: origClass?.description ?? null,
+        zoom_link: origClass?.zoom_link ?? null,
+        status: origClass?.status ?? 'active',
+        default_passing_pct: origClass?.default_passing_pct ?? 75,
+        at_risk_threshold: origClass?.at_risk_threshold ?? null,
+        score_brackets: origClass?.score_brackets ?? null,
+        public_notes: null, public_notes_position: null,
+      }).select('id').single()
+      if (classErr || !newClass) throw classErr ?? new Error('Failed to create class')
+      const newClassId = newClass.id
+
+      // 3. Copy subjects, build old→new ID map
+      const subjectIdMap = new Map<string, string>()
+      if (origSubjects && origSubjects.length > 0) {
+        const { data: newSubjects, error: subErr } = await supabase.from('subjects')
+          .insert(origSubjects.map(s => ({ class_id: newClassId, name: s.name })))
+          .select('id, name')
+        if (subErr) throw subErr
+        if (newSubjects) {
+          newSubjects.forEach((ns, i) => {
+            const orig = origSubjects[i]
+            if (orig) subjectIdMap.set(orig.id, ns.id)
+          })
+        }
+      }
+
+      // 4. Copy students (enroll same students)
+      if (copyStudents && origStudents && origStudents.length > 0) {
+        const { error: stuErr } = await supabase.from('class_students')
+          .insert(origStudents.map((s: { student_id: string }) => ({ class_id: newClassId, student_id: s.student_id })))
+        if (stuErr) throw stuErr
+      }
+
+      // 5. Copy exams (remap subject_ids)
+      if (copyExams && origExams && origExams.length > 0) {
+        const { error: examErr } = await supabase.from('exams').insert(origExams.map((e: Record<string, unknown>) => ({
+          class_id: newClassId,
+          name: e.name,
+          date: e.date ?? null,
+          total_items: e.total_items ?? 1,
+          passing_pct_override: e.passing_pct_override ?? null,
+          subject_id: e.subject_id ? (subjectIdMap.get(e.subject_id as string) ?? null) : null,
+          subject_ids: Array.isArray(e.subject_ids)
+            ? (e.subject_ids as string[]).map(id => subjectIdMap.get(id) ?? id).filter(Boolean)
+            : null,
+        })))
+        if (examErr) throw examErr
+      }
+
+      // 6. Copy sessions (remap subject_ids)
+      if (copySessions && origSessions && origSessions.length > 0) {
+        const { error: sessErr } = await supabase.from('sessions').insert(origSessions.map((s: Record<string, unknown>) => ({
+          class_id: newClassId,
+          date: s.date,
+          start_time: s.start_time ?? null,
+          end_time: s.end_time ?? null,
+          teacher_id: s.teacher_id ?? null,
+          status: s.status ?? 'scheduled',
+          topic: s.topic ?? null,
+          zoom_link: s.zoom_link ?? null,
+          student_count: s.student_count ?? 0,
+          subject_id: s.subject_id ? (subjectIdMap.get(s.subject_id as string) ?? null) : null,
+          subject_ids: Array.isArray(s.subject_ids)
+            ? (s.subject_ids as string[]).map(id => subjectIdMap.get(id) ?? id).filter(Boolean)
+            : null,
+        })))
+        if (sessErr) throw sessErr
+      }
+
+      await logActivity('duplicated_class', 'class', newClassId, name.trim(), `Duplicated "${cls.name}" → "${name.trim()}"`)
+
+      onDuplicated({
+        id: newClassId,
+        name: name.trim(),
+        status: origClass?.status ?? 'active',
+        zoom_link: origClass?.zoom_link ?? null,
+        subjectsCount: origSubjects?.length ?? 0,
+        sessionsCount: copySessions ? (origSessions?.length ?? 0) : 0,
+        studentsCount: copyStudents ? (origStudents?.length ?? 0) : 0,
+        completionPct: 0,
+      })
+      onClose()
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Duplication failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const checkStyle: React.CSSProperties = { accentColor: '#0BB5C7', width: 16, height: 16, cursor: 'pointer' }
+  const labelStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, fontSize: 14, color: 'var(--color-text-primary)', cursor: 'pointer' }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+      <div className="rounded-2xl w-full max-w-md p-6 space-y-5" style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
+        <h2 className="text-lg font-bold" style={{ color: 'var(--color-text-primary)' }}>Duplicate Class</h2>
+
+        {error && (
+          <div className="text-sm p-3 rounded-lg" style={{ backgroundColor: 'rgba(239,68,68,0.08)', color: 'var(--color-danger)' }}>
+            {error}
+          </div>
+        )}
+
+        <div className="space-y-1.5">
+          <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>New class name</label>
+          <input
+            type="text"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            className="w-full"
+            style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)', fontSize: '14px', outline: 'none' }}
+            autoFocus
+          />
+        </div>
+
+        <div className="space-y-3">
+          <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>Also copy</p>
+          <label style={labelStyle}>
+            <input type="checkbox" checked={copyStudents} onChange={e => setCopyStudents(e.target.checked)} style={checkStyle} />
+            Students
+          </label>
+          <label style={labelStyle}>
+            <input type="checkbox" checked={copyExams} onChange={e => setCopyExams(e.target.checked)} style={checkStyle} />
+            Exams
+          </label>
+          <label style={labelStyle}>
+            <input type="checkbox" checked={copySessions} onChange={e => setCopySessions(e.target.checked)} style={checkStyle} />
+            Class Sessions
+          </label>
+        </div>
+
+        <div className="flex gap-2 justify-end pt-1">
+          <button onClick={onClose} className="px-4 py-2 text-sm rounded-xl"
+            style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}>
+            Cancel
+          </button>
+          <button onClick={handleDuplicate} disabled={loading}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl text-white disabled:opacity-60"
+            style={{ backgroundColor: '#0BB5C7' }}>
+            {loading ? <><Loader2 size={13} className="animate-spin" /> Duplicating…</> : <><Copy size={13} /> Duplicate</>}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }

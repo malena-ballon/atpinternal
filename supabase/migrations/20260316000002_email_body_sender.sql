@@ -1,0 +1,2 @@
+ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS body     TEXT;
+ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS sent_by  TEXT;

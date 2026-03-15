@@ -26,6 +26,7 @@ interface Session {
   status: string
   topic?: string | null
   subject_ids?: string[] | null
+  is_assessment?: boolean | null
   subjects?: { name: string } | null
 }
 
@@ -125,9 +126,12 @@ export default function PublicSessionsTable({ sessions, subjects }: Props) {
               </thead>
               <tbody>
                 {visible.map((s, i) => {
-                  const names = s.subject_ids?.length
-                    ? s.subject_ids.map(id => subjects.find(sub => sub.id === id)?.name).filter(Boolean) as string[]
-                    : s.subjects?.name ? [s.subjects.name] : []
+                  const names = [
+                    ...(s.subject_ids?.length
+                      ? s.subject_ids.map(id => subjects.find(sub => sub.id === id)?.name).filter(Boolean) as string[]
+                      : s.subjects?.name ? [s.subjects.name] : []),
+                    ...(s.is_assessment ? ['Assessment'] : []),
+                  ]
                   const isLast = i === visible.length - 1
                   const isExpanded = expandedIds.has(s.id)
                   const meta = STATUS_META[s.status] ?? STATUS_META.scheduled
@@ -193,9 +197,12 @@ export default function PublicSessionsTable({ sessions, subjects }: Props) {
           {/* Mobile cards */}
           <div className="sm:hidden space-y-3">
             {visible.map((s, i) => {
-              const names = s.subject_ids?.length
-                ? s.subject_ids.map(id => subjects.find(sub => sub.id === id)?.name).filter(Boolean) as string[]
-                : s.subjects?.name ? [s.subjects.name] : []
+              const names = [
+                ...(s.subject_ids?.length
+                  ? s.subject_ids.map(id => subjects.find(sub => sub.id === id)?.name).filter(Boolean) as string[]
+                  : s.subjects?.name ? [s.subjects.name] : []),
+                ...(s.is_assessment ? ['Assessment'] : []),
+              ]
               const isExpanded = expandedIds.has(s.id)
               const meta = STATUS_META[s.status] ?? STATUS_META.scheduled
               return (

@@ -84,9 +84,11 @@ export async function sendTeacherInvite(teacherId: string): Promise<{ ok: boolea
   const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000'
   const registerUrl = `${baseUrl}/register?email=${encodeURIComponent(teacher.email)}`
 
+  const replyTo = await getReplyTo()
   const { error } = await resend.emails.send({
     from: FROM_EMAIL,
     to: teacher.email,
+    ...(replyTo ? { replyTo } : {}),
     subject: "You're invited to join ATP Internal",
     html: `
       <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;">
@@ -102,6 +104,15 @@ export async function sendTeacherInvite(teacherId: string): Promise<{ ok: boolea
   })
 
   if (error) return { ok: false, error: error.message }
+  await logSentEmail({
+    subject: "You're invited to join ATP Internal",
+    toAddresses: [{ name: teacher.name, email: teacher.email }],
+    type: 'invite',
+    context: teacher.name,
+    body: `Hi ${teacher.name}, you've been added as a teacher on the Acadgenius Tutorial Powerhouse internal platform. A registration link was included so they can create their account without requiring approval.`,
+    sentCount: 1,
+    failedCount: 0,
+  })
   return { ok: true }
 }
 
@@ -209,6 +220,7 @@ export async function sendTeacherSessionEmail(sessionIds: string[]): Promise<{ s
     byTeacher.get(tid)!.push(s)
   }
 
+  const replyToTeacher = await getReplyTo()
   let sent = 0
   for (const [, teacherSessions] of byTeacher) {
     const teacherData = (teacherSessions[0] as { teachers?: { name: string; email: string }[] | null }).teachers
@@ -241,14 +253,32 @@ export async function sendTeacherSessionEmail(sessionIds: string[]): Promise<{ s
   </div>
 </body></html>`
     try {
+      const sessSubject = `New Sessions Assigned – ${(teacherSessions[0] as { classes?: { name: string }[] | null }).classes?.[0]?.name ?? 'ATP'}`
       const { error } = await resend.emails.send({
         from: FROM_EMAIL,
         to: teacher.email,
-        subject: `New Sessions Assigned – ${(teacherSessions[0] as { classes?: { name: string }[] | null }).classes?.[0]?.name ?? 'ATP'}`,
+        ...(replyToTeacher ? { replyTo: replyToTeacher } : {}),
+        subject: sessSubject,
         html,
       })
       if (error) console.error('[sendTeacherSessionEmail] Resend error for', teacher.email, error)
-      else sent++
+      else {
+        sent++
+        const sessionLines = teacherSessions.map(s => {
+          const cls = (s as { classes?: { name: string }[] | null }).classes?.[0]?.name ?? '—'
+          const subj = (s as { subjects?: { name: string } | null }).subjects?.name ?? '—'
+          return `• ${s.date}  ${s.start_time ? fmtTime(s.start_time) + ' – ' + fmtTime(s.end_time ?? '') : 'Time TBD'}  |  ${subj}  |  ${cls}`
+        }).join('\n')
+        await logSentEmail({
+          subject: sessSubject,
+          toAddresses: [{ name: teacher.name, email: teacher.email }],
+          type: 'session_notify',
+          context: (teacherSessions[0] as { classes?: { name: string }[] | null }).classes?.[0]?.name,
+          body: `Hi ${teacher.name}, you have been assigned to ${teacherSessions.length} session(s):\n\n${sessionLines}`,
+          sentCount: 1,
+          failedCount: 0,
+        })
+      }
     } catch (e) {
       console.error('[sendTeacherSessionEmail] failed for', teacher.email, e)
     }
@@ -314,10 +344,14 @@ export async function emailSessionSchedule(
     const today = new Date().toISOString().slice(0, 10)
     const safeName = student.name.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '')
 
+    const schedReplyTo = await getReplyTo()
+    const schedSubject = `Session Schedule – ${className}`
+    const schedFilename = `${safeName}_${className.replace(/\s+/g, '-')}_schedule_${today}.pdf`
     const { error: sendError } = await resend.emails.send({
       from: FROM_EMAIL,
       to: student.email,
-      subject: `Session Schedule – ${className}`,
+      ...(schedReplyTo ? { replyTo: schedReplyTo } : {}),
+      subject: schedSubject,
       html: `
 <div style="font-family:system-ui,sans-serif;padding:24px;max-width:480px;margin:0 auto;">
   <div style="background:#0BB5C7;padding:16px 20px;border-radius:8px 8px 0 0;">
@@ -329,15 +363,23 @@ export async function emailSessionSchedule(
     <p style="margin:0;font-size:12px;color:#9ca3af;">Sent by Acadgenius Tutorial Powerhouse.</p>
   </div>
 </div>`,
-      attachments: [{
-        filename: `${safeName}_${className.replace(/\s+/g, '-')}_schedule_${today}.pdf`,
-        content: buffer,
-      }],
+      attachments: [{ filename: schedFilename, content: buffer }],
     })
     if (sendError) {
       console.error('[emailSessionSchedule] Resend error', sendError)
       return { ok: false, skipped: false, error: sendError.message }
     }
+    const schedStoragePath = await uploadToEmailStorage(buffer, schedFilename)
+    await logSentEmail({
+      subject: schedSubject,
+      toAddresses: [{ name: student.name, email: student.email }],
+      type: 'schedule',
+      context: className,
+      body: `Hi ${student.name}, please find the session schedule for ${className} attached as a PDF. The schedule includes ${sessions?.length ?? 0} session(s).`,
+      attachments: schedStoragePath ? [{ filename: schedFilename, storage_path: schedStoragePath, recipient_email: student.email }] : [{ filename: schedFilename }],
+      sentCount: 1,
+      failedCount: 0,
+    })
     return { ok: true, skipped: false }
   } catch (e) {
     console.error('[emailSessionSchedule] failed', e)
@@ -358,8 +400,19 @@ export async function sendReportEmails(
   extraAttachments: { filename: string; base64: string }[]
 ): Promise<{ sent: number; failed: number }> {
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const replyToReport = await getReplyTo()
   let sent = 0
   let failed = 0
+  const allAttachments: { filename: string; storage_path?: string; recipient_email?: string }[] = []
+
+  // Upload extra (shared) attachments to storage
+  const extraStored = await Promise.all(
+    extraAttachments.map(async a => {
+      const path = await uploadToEmailStorage(Buffer.from(a.base64, 'base64'), a.filename)
+      return { filename: a.filename, storage_path: path ?? undefined }
+    })
+  )
+  allAttachments.push(...extraStored)
 
   for (const r of recipients) {
     try {
@@ -386,6 +439,7 @@ export async function sendReportEmails(
       const { error } = await resend.emails.send({
         from: FROM_EMAIL,
         to: r.email,
+        ...(replyToReport ? { replyTo: replyToReport } : {}),
         subject,
         html,
         attachments: [...pdfAttachments, ...extraAttach],
@@ -395,12 +449,29 @@ export async function sendReportEmails(
         failed++
       } else {
         sent++
+        // Upload per-recipient PDFs to storage concurrently
+        const uploaded = await Promise.all(
+          r.pdfs.map(async pdf => {
+            const path = await uploadToEmailStorage(Buffer.from(pdf.base64, 'base64'), pdf.filename)
+            return { filename: pdf.filename, storage_path: path ?? undefined, recipient_email: r.email }
+          })
+        )
+        allAttachments.push(...uploaded)
       }
     } catch (e) {
       console.error('[sendReportEmails] exception for', r.email, e)
       failed++
     }
   }
+  await logSentEmail({
+    subject,
+    toAddresses: recipients.map(r => ({ name: r.name, email: r.email })),
+    type: 'report',
+    body: signature ? `${body}\n\n—\n${signature}` : body,
+    attachments: allAttachments,
+    sentCount: sent,
+    failedCount: failed,
+  })
   return { sent, failed }
 }
 
@@ -500,10 +571,14 @@ export async function emailStudentReport(
     const today = new Date().toISOString().slice(0, 10)
     const safeName = student.name.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '')
 
+    const reportReplyTo = await getReplyTo()
+    const reportSubject = `Your Performance Report – ${className}`
+    const reportFilename = `${safeName}_${className.replace(/\s+/g, '-')}_${today}.pdf`
     const { error: sendError } = await resend.emails.send({
       from: FROM_EMAIL,
       to: student.email,
-      subject: `Your Performance Report – ${className}`,
+      ...(reportReplyTo ? { replyTo: reportReplyTo } : {}),
+      subject: reportSubject,
       html: `
 <div style="font-family:system-ui,sans-serif;padding:24px;max-width:480px;margin:0 auto;">
   <div style="background:#0BB5C7;padding:16px 20px;border-radius:8px 8px 0 0;">
@@ -515,18 +590,129 @@ export async function emailStudentReport(
     <p style="margin:0;font-size:12px;color:#9ca3af;">Sent by Acadgenius Tutorial Powerhouse.</p>
   </div>
 </div>`,
-      attachments: [{
-        filename: `${safeName}_${className.replace(/\s+/g, '-')}_${today}.pdf`,
-        content: buffer,
-      }],
+      attachments: [{ filename: reportFilename, content: buffer }],
     })
     if (sendError) {
       console.error('[emailStudentReport] Resend error', sendError)
       return { ok: false, skipped: false, error: sendError.message }
     }
+    const reportStoragePath = await uploadToEmailStorage(buffer, reportFilename)
+    await logSentEmail({
+      subject: reportSubject,
+      toAddresses: [{ name: student.name, email: student.email }],
+      type: 'report',
+      context: className,
+      body: `Hi ${student.name}, please find your performance report for ${className} attached as a PDF. The report covers ${sortedExams.length} exam(s) with an average score of ${Math.round(avgPct)}%.`,
+      attachments: reportStoragePath ? [{ filename: reportFilename, storage_path: reportStoragePath, recipient_email: student.email }] : [{ filename: reportFilename }],
+      sentCount: 1,
+      failedCount: 0,
+    })
     return { ok: true, skipped: false }
   } catch (e) {
     console.error('[emailStudentReport] failed', e)
     return { ok: false, skipped: false, error: String(e) }
   }
+}
+
+// ── Email inbox helpers ────────────────────────────────────────────────────────
+
+async function getReplyTo(): Promise<string | undefined> {
+  const svc = createServiceClient()
+  const { data } = await svc.from('email_settings').select('reply_to').eq('id', 1).single()
+  return data?.reply_to ?? undefined
+}
+
+async function uploadToEmailStorage(buffer: Buffer, filename: string): Promise<string | null> {
+  try {
+    const svc = createServiceClient()
+    const path = `${new Date().toISOString().slice(0, 7)}/${crypto.randomUUID()}_${filename}`
+    const { error } = await svc.storage.from('email-attachments').upload(path, buffer, { contentType: 'application/pdf' })
+    if (error) { console.error('[uploadToEmailStorage]', error.message); return null }
+    return path
+  } catch (e) {
+    console.error('[uploadToEmailStorage] exception:', e)
+    return null
+  }
+}
+
+export async function getEmailAttachmentUrl(storagePath: string): Promise<{ url: string } | { error: string }> {
+  const svc = createServiceClient()
+  const { data, error } = await svc.storage.from('email-attachments').createSignedUrl(storagePath, 3600)
+  if (error || !data) return { error: error?.message ?? 'Failed to generate URL' }
+  return { url: data.signedUrl }
+}
+
+async function getCurrentUserName(): Promise<string> {
+  try {
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return 'System'
+    const { data: profile } = await supabase.from('users').select('name').eq('id', user.id).single()
+    return profile?.name ?? 'System'
+  } catch {
+    return 'System'
+  }
+}
+
+async function logSentEmail(opts: {
+  subject: string
+  toAddresses: { name: string; email: string }[]
+  type: string
+  context?: string
+  body?: string
+  attachments?: { filename: string; storage_path?: string; recipient_email?: string }[]
+  sentCount: number
+  failedCount: number
+}): Promise<void> {
+  try {
+    const svc = createServiceClient()
+    const sentBy = await getCurrentUserName()
+    const { error } = await svc.from('sent_emails').insert({
+      subject: opts.subject,
+      to_addresses: opts.toAddresses,
+      type: opts.type,
+      context: opts.context ?? null,
+      body: opts.body ?? null,
+      sent_by: sentBy,
+      attachments: opts.attachments ?? [],
+      sent_count: opts.sentCount,
+      failed_count: opts.failedCount,
+    })
+    if (error) console.error('[logSentEmail] insert failed:', error.message)
+  } catch (e) {
+    console.error('[logSentEmail] exception:', e)
+  }
+}
+
+export async function getEmailSettings(): Promise<{ reply_to: string | null }> {
+  const svc = createServiceClient()
+  const { data } = await svc.from('email_settings').select('reply_to').eq('id', 1).single()
+  return { reply_to: data?.reply_to ?? null }
+}
+
+export async function saveEmailSettings(replyTo: string): Promise<{ ok: boolean; error?: string }> {
+  const svc = createServiceClient()
+  const { error } = await svc.from('email_settings')
+    .update({ reply_to: replyTo || null, updated_at: new Date().toISOString() })
+    .eq('id', 1)
+  if (error) return { ok: false, error: error.message }
+  return { ok: true }
+}
+
+export async function deleteEmails(ids: string[]): Promise<{ ok: boolean; error?: string }> {
+  if (!ids.length) return { ok: true }
+  const svc = createServiceClient()
+  // Fetch storage paths before deleting rows
+  const { data: rows } = await svc.from('sent_emails').select('attachments').in('id', ids)
+  const storagePaths = (rows ?? []).flatMap(r =>
+    ((r.attachments ?? []) as { storage_path?: string }[])
+      .map(a => a.storage_path)
+      .filter(Boolean) as string[]
+  )
+  if (storagePaths.length > 0) {
+    await svc.storage.from('email-attachments').remove(storagePaths)
+  }
+  const { error } = await svc.from('sent_emails').delete().in('id', ids)
+  if (error) return { ok: false, error: error.message }
+  return { ok: true }
 }

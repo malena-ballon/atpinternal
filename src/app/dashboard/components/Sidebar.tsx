@@ -12,6 +12,7 @@ import {
   LogOut,
   HeartIcon,
   Activity,
+  Mail,
 } from 'lucide-react'
 import { signOut } from '@/app/actions'
 
@@ -122,6 +123,7 @@ export default function Sidebar({ name, role, pendingCount = 0 }: Props) {
         {role === 'admin' && (
           <>
             <NavItem href="/dashboard/activity" icon={Activity} label="Activity Log" />
+            <NavItem href="/dashboard/email" icon={Mail} label="Email" />
             <NavItem href="/dashboard/notebook" icon={BookMarked} label="Notebook" />
             <NavItem href="/dashboard/malena" icon={HeartIcon} label="Malena" />
           </>
