@@ -11,6 +11,7 @@ import StudentsManager from './StudentsManager'
 import ExamsManager from './ExamsManager'
 import PerformanceInsights from './PerformanceInsights'
 import PublicNotesEditor from './PublicNotesEditor'
+import StudentCodesTab from './StudentCodesTab'
 
 function Section({ title, children, scrollable }: { title: string; children: React.ReactNode; scrollable?: boolean }) {
   return (
@@ -26,7 +27,7 @@ function Section({ title, children, scrollable }: { title: string; children: Rea
   )
 }
 
-type Tab = 'class' | 'insights' | 'sessions'
+type Tab = 'class' | 'insights' | 'sessions' | 'portal'
 
 interface Props {
   cls: ClassRow
@@ -62,6 +63,7 @@ export default function ClassTabs({ cls, subjects, sessionsData, teachersData, s
     { id: 'class', label: 'Class' },
     { id: 'insights', label: 'Performance Insights' },
     { id: 'sessions', label: 'Sessions' },
+    { id: 'portal', label: 'Student Portal' },
   ]
 
   return (
@@ -210,6 +212,19 @@ export default function ClassTabs({ cls, subjects, sessionsData, teachersData, s
             students={students}
             initialStudentCount={sessionsData[0]?.student_count ?? 0}
           />
+        </div>
+      )}
+
+      {/* Student Portal tab */}
+      {tab === 'portal' && (
+        <div className="rounded-2xl p-6" style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+          <div className="mb-5">
+            <h2 className="text-base font-semibold" style={{ color: 'var(--color-text-primary)' }}>Student Portal</h2>
+            <p className="text-sm mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
+              Generate and distribute private access codes so students can view their individual report at the public portal.
+            </p>
+          </div>
+          <StudentCodesTab classId={cls.id} className={cls.name} students={students} />
         </div>
       )}
 

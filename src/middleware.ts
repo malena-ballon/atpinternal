@@ -4,7 +4,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 // Auth pages — redirect logged-in users away from these
 const AUTH_PATHS = ['/login', '/register', '/auth']
 // Fully public — anyone can access, logged in or not (no redirect)
-const OPEN_PATHS = ['/schedule']
+const OPEN_PATHS = ['/schedule', '/portal']
 // Accessible with a session regardless of approval status
 const SEMI_PUBLIC_PATHS = ['/pending']
 

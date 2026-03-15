@@ -716,3 +716,168 @@ export async function deleteEmails(ids: string[]): Promise<{ ok: boolean; error?
   if (error) return { ok: false, error: error.message }
   return { ok: true }
 }
+
+// ── Student Portal Codes ───────────────────────────────────────────────────────
+
+function generatePortalCode(): string {
+  // 6-char uppercase alphanumeric, excluding visually confusable chars (0,1,I,O)
+  const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'
+  return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
+}
+
+export async function generateStudentCodes(
+  studentIds: string[]
+): Promise<{ ok: boolean; codes?: { studentId: string; code: string }[]; error?: string }> {
+  if (!studentIds.length) return { ok: true, codes: [] }
+  const supabase = createServiceClient()
+  const rows = studentIds.map(id => ({ student_id: id, code: generatePortalCode() }))
+  const { error } = await supabase
+    .from('student_portal_codes')
+    .upsert(rows, { onConflict: 'student_id' })
+  if (error) return { ok: false, error: error.message }
+  return { ok: true, codes: rows.map(r => ({ studentId: r.student_id, code: r.code })) }
+}
+
+export async function getStudentCodes(
+  studentIds: string[]
+): Promise<{ ok: boolean; codes?: { studentId: string; code: string }[]; error?: string }> {
+  if (!studentIds.length) return { ok: true, codes: [] }
+  const supabase = createServiceClient()
+  const { data, error } = await supabase
+    .from('student_portal_codes')
+    .select('student_id, code')
+    .in('student_id', studentIds)
+  if (error) return { ok: false, error: error.message }
+  return { ok: true, codes: (data ?? []).map(c => ({ studentId: c.student_id, code: c.code })) }
+}
+
+export async function sendStudentAccessCodes(
+  recipients: { name: string; email: string; code: string }[],
+  className: string,
+): Promise<{ sent: number; failed: number }> {
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const base = process.env.NEXT_PUBLIC_APP_URL ?? ''
+  const portalUrl = `${base}/portal`
+  let sent = 0, failed = 0
+
+  for (const r of recipients) {
+    const html = `
+<div style="font-family:system-ui,sans-serif;padding:24px;max-width:560px;margin:0 auto;">
+  <div style="background:#1E3A5F;padding:16px 20px;border-radius:8px 8px 0 0;">
+    <span style="color:#fff;font-size:16px;font-weight:700;">Your Student Portal Access Code</span>
+  </div>
+  <div style="padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;">
+    <p style="margin:0 0 12px;color:#374151;font-size:15px;">Hi <strong>${esc(r.name)}</strong>,</p>
+    <p style="margin:0 0 20px;color:#374151;font-size:14px;">You can now view your personal performance report for <strong>${esc(className)}</strong>.</p>
+    <div style="background:#f8fafc;border:2px solid #1E3A5F;border-radius:10px;padding:20px;text-align:center;margin:0 0 20px;">
+      <p style="margin:0 0 8px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;">Your Access Code</p>
+      <p style="margin:0;font-size:32px;font-weight:700;letter-spacing:0.25em;color:#1E3A5F;font-family:monospace;">${esc(r.code)}</p>
+    </div>
+    <p style="margin:0 0 8px;color:#374151;font-size:14px;font-weight:600;">To view your report:</p>
+    <ol style="margin:0 0 20px;padding-left:20px;color:#374151;font-size:14px;line-height:2;">
+      <li>Go to <a href="${portalUrl}" style="color:#0BB5C7;font-weight:600;">${portalUrl}</a></li>
+      <li>Select your class: <strong>${esc(className)}</strong></li>
+      <li>Select your name</li>
+      <li>Enter the code above</li>
+    </ol>
+    <p style="margin:0;font-size:11px;color:#9ca3af;">Keep this code private. Sent by Acadgenius Tutorial Powerhouse.</p>
+  </div>
+</div>`
+    try {
+      const { error } = await resend.emails.send({
+        from: FROM_EMAIL,
+        to: r.email,
+        subject: `Your Student Portal Access Code — ${className}`,
+        html,
+      })
+      if (error) { console.error('[sendStudentAccessCodes]', r.email, error); failed++ }
+      else sent++
+    } catch (e) {
+      console.error('[sendStudentAccessCodes] exception', r.email, e)
+      failed++
+    }
+  }
+  return { sent, failed }
+}
+
+// ── Public portal data (no auth required, uses service client) ─────────────────
+
+export async function getPortalClasses(): Promise<{ id: string; name: string }[]> {
+  const supabase = createServiceClient()
+  const { data } = await supabase
+    .from('classes')
+    .select('id, name')
+    .eq('status', 'active')
+    .order('name')
+  return data ?? []
+}
+
+export async function getPortalStudents(classId: string): Promise<{ id: string; name: string }[]> {
+  const supabase = createServiceClient()
+  const { data } = await supabase
+    .from('class_students')
+    .select('students(id, name)')
+    .eq('class_id', classId)
+  return (data ?? [])
+    .map(r => r.students as unknown as { id: string; name: string })
+    .filter(Boolean)
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+export async function getPortalStudentReport(
+  studentId: string,
+  classId: string,
+  code: string,
+): Promise<{
+  ok: boolean
+  error?: string
+  data?: {
+    cls: { id: string; name: string; default_passing_pct: number }
+    subjects: { id: string; name: string; class_id: string; created_at: string }[]
+    exams: unknown[]
+    scores: unknown[]
+    students: unknown[]
+    studentId: string
+  }
+}> {
+  const supabase = createServiceClient()
+
+  // Verify code
+  const { data: codeRow } = await supabase
+    .from('student_portal_codes')
+    .select('code')
+    .eq('student_id', studentId)
+    .single()
+
+  if (!codeRow || codeRow.code.toUpperCase() !== code.trim().toUpperCase()) {
+    return { ok: false, error: 'Incorrect code. Please try again.' }
+  }
+
+  const [{ data: cls }, { data: subjects }, { data: examsRaw }, { data: classStudentsData }] = await Promise.all([
+    supabase.from('classes').select('id, name, default_passing_pct').eq('id', classId).single(),
+    supabase.from('subjects').select('id, name, class_id, created_at').eq('class_id', classId),
+    supabase.from('exams')
+      .select('id, class_id, subject_id, subject_ids, name, date, total_items, passing_pct_override, created_at, updated_at, subjects(name)')
+      .eq('class_id', classId)
+      .order('date', { ascending: true }),
+    supabase.from('class_students')
+      .select('students(id, name, school, email, created_at)')
+      .eq('class_id', classId),
+  ])
+
+  if (!cls) return { ok: false, error: 'Class not found.' }
+
+  const exams = examsRaw ?? []
+  const students = (classStudentsData ?? []).map(cs => cs.students).filter(Boolean)
+
+  let scores: unknown[] = []
+  if (exams.length > 0) {
+    const { data: scoresData } = await supabase
+      .from('scores')
+      .select('id, exam_id, student_id, raw_score, total_items, percentage, created_at, subject_scores')
+      .in('exam_id', (exams as { id: string }[]).map(e => e.id))
+    scores = scoresData ?? []
+  }
+
+  return { ok: true, data: { cls, subjects: subjects ?? [], exams, scores, students, studentId } }
+}

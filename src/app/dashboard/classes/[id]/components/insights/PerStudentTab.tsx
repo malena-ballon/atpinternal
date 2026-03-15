@@ -1,12 +1,13 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
-import { ordinal } from '../PerformanceInsights'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar } from 'recharts'
+import { ordinal, calcMean } from '../PerformanceInsights'
 import type { StudentStats } from '../PerformanceInsights'
 import ExportButton, { downloadBlob, pdfFileName } from '../pdf/ExportButton'
 import CopyableTable from '@/app/dashboard/components/CopyableTable'
 import type { SubjectRow } from '@/types'
+import type { PDFSubjectStat } from '../pdf/StudentReportPDF'
 import { Mail } from 'lucide-react'
 import EmailComposeStep, { type EmailRecipient } from './EmailComposeStep'
 import { sendReportEmails, logActivity } from '@/app/actions'
@@ -113,6 +114,44 @@ export default function PerStudentTab({ className, studentStats, totalExams, tot
           }
         }
       }
+      // Compute subject-level stats for PDF
+      const pdfSubjectStats: PDFSubjectStat[] = pdfSubjList.map(subj => {
+        const grades: number[] = []
+        for (const sc of studentStat.scores) {
+          const ids = sc.exam.subject_ids ?? (sc.exam.subject_id ? [sc.exam.subject_id] : [])
+          if (!ids.includes(subj.id)) continue
+          if (sc.subject_scores?.length) {
+            const ss = sc.subject_scores.find(x => x.subject_id === subj.id)
+            if (ss && ss.total_items > 0) { grades.push((ss.raw_score / ss.total_items) * 100); continue }
+          }
+          if (ids.length === 1) grades.push(sc.percentage)
+        }
+        const percentiles: number[] = []
+        for (const subjMap of Object.values(subjPctData)) {
+          const pct = subjMap[subj.id]
+          if (pct !== undefined) percentiles.push(pct)
+        }
+        return {
+          id: subj.id,
+          name: subj.name,
+          avgGrade: grades.length > 0 ? grades.reduce((a, b) => a + b, 0) / grades.length : null,
+          highestGrade: grades.length > 0 ? Math.max(...grades) : null,
+          avgPercentile: percentiles.length > 0 ? Math.round(percentiles.reduce((a, b) => a + b, 0) / percentiles.length) : null,
+        }
+      }).filter(s => s.avgGrade !== null)
+
+      // Compute highest class score per exam for PDF benchmarking
+      const pdfHighestByExam: Record<string, { pct: number; name: string }> = {}
+      for (const sc of studentStat.scores) {
+        let best: { pct: number; name: string } | null = null
+        for (const st of studentStats) {
+          const stSc = st.scores.find(s => s.exam.id === sc.exam.id)
+          if (!stSc) continue
+          if (!best || stSc.percentage > best.pct) best = { pct: stSc.percentage, name: st.student.name }
+        }
+        if (best) pdfHighestByExam[sc.exam.id] = best
+      }
+
       const blob = await pdf(
         <StudentReportPDF
           className={className}
@@ -122,6 +161,8 @@ export default function PerStudentTab({ className, studentStats, totalExams, tot
           classPassingPct={classPassingPct}
           subjectPercentileByExam={subjPctData}
           pdfSubjects={pdfSubjList}
+          subjectStats={pdfSubjectStats}
+          highestByExam={pdfHighestByExam}
         />
       ).toBlob()
       const safeName = studentStat.student.name.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '')
@@ -274,6 +315,63 @@ export default function PerStudentTab({ className, studentStats, totalExams, tot
     pct: parseFloat(s.percentage.toFixed(1)),
   })) ?? []
 
+  // ── UPCAT countdown ───────────────────────────────────────────────────────
+  const upcatDate = new Date('2026-08-06')
+  const daysUntilUpcat = Math.ceil((upcatDate.getTime() - Date.now()) / 86400000)
+  const upcatColor = '#1E3A5F'
+
+  // ── Subject-level stats (avg grade, highest grade, avg percentile) ─────────
+  const subjectStats = useMemo(() => {
+    if (!stats || !relevantSubjects.length) return []
+    return relevantSubjects.map(subj => {
+      const grades: number[] = []
+      for (const sc of stats.scores) {
+        const ids = sc.exam.subject_ids ?? (sc.exam.subject_id ? [sc.exam.subject_id] : [])
+        if (!ids.includes(subj.id)) continue
+        if (sc.subject_scores?.length) {
+          const ss = sc.subject_scores.find(x => x.subject_id === subj.id)
+          if (ss && ss.total_items > 0) { grades.push((ss.raw_score / ss.total_items) * 100); continue }
+        }
+        if (ids.length === 1) grades.push(sc.percentage)
+      }
+      const percentiles: number[] = []
+      for (const [, subjMap] of subjectPercentileByExam) {
+        const pct = subjMap.get(subj.id)
+        if (pct !== undefined) percentiles.push(pct)
+      }
+      return {
+        id: subj.id,
+        name: subj.name,
+        avgGrade: grades.length > 0 ? calcMean(grades) : null,
+        highestGrade: grades.length > 0 ? Math.max(...grades) : null,
+        avgPercentile: percentiles.length > 0 ? Math.round(calcMean(percentiles)) : null,
+      }
+    }).filter(s => s.avgGrade !== null)
+  }, [stats, relevantSubjects, subjectPercentileByExam])
+
+  // ── Highest class score per exam (for benchmarking) ───────────────────────
+  const highestByExam = useMemo(() => {
+    if (!stats) return new Map<string, { pct: number; name: string }>()
+    const map = new Map<string, { pct: number; name: string }>()
+    for (const sc of stats.scores) {
+      let best: { pct: number; name: string } | null = null
+      for (const st of studentStats) {
+        const stSc = st.scores.find(s => s.exam.id === sc.exam.id)
+        if (!stSc) continue
+        if (!best || stSc.percentage > best.pct) best = { pct: stSc.percentage, name: st.student.name }
+      }
+      if (best) map.set(sc.exam.id, best)
+    }
+    return map
+  }, [stats, studentStats])
+
+  // ── Radar data ────────────────────────────────────────────────────────────
+  const radarData = subjectStats.map(s => ({
+    subject: s.name.length > 10 ? s.name.slice(0, 9) + '…' : s.name,
+    avg: parseFloat((s.avgGrade ?? 0).toFixed(1)),
+    fullMark: 100,
+  }))
+
   return (
     <div className="space-y-4">
       {/* EXPORT MODAL */}
@@ -388,50 +486,83 @@ export default function PerStudentTab({ className, studentStats, totalExams, tot
 
       {stats && (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {[
-              { label: 'Overall Avg', value: stats.avgPct.toFixed(1) + '%' },
-              { label: 'Class Rank', value: `${ordinal(stats.rank)} of ${studentStats.length}` },
-              { label: 'Percentile', value: ordinal(stats.percentile) },
-              { label: 'Exams Taken', value: `${stats.examsTaken} / ${totalExams}` },
-            ].map(card => (
-              <div key={card.label} className="rounded-xl p-4 text-center" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
-                <div className="text-lg font-bold" style={{ color: 'var(--color-text-primary)' }}>{card.value}</div>
-                <div className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{card.label}</div>
+          {/* ── ROW 1: UPCAT countdown (leftmost) + 3 stat cards ── */}
+          <div className="flex items-stretch gap-3">
+            {daysUntilUpcat > 0 && (
+              <div className="flex flex-col items-center justify-center px-4 py-2 gap-0.5">
+                <span className="text-3xl font-black leading-none" style={{ color: upcatColor }}>{daysUntilUpcat}</span>
+                <span className="text-xs font-bold tracking-wide uppercase" style={{ color: upcatColor }}>days until UPCAT</span>
+                <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>Aug 6, 2026</span>
+                {stats.trend === 'improving' && (
+                  <span className="text-xs px-1.5 py-0.5 rounded-full mt-1" style={{ backgroundColor: 'rgba(22,163,94,0.1)', color: '#16A34A', fontSize: 10 }}>
+                    trending up ↑
+                  </span>
+                )}
               </div>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div className="rounded-xl p-4" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
-              <div className="text-xs mb-1" style={{ color: 'var(--color-text-muted)' }}>Performance Trend</div>
-              <div className="text-sm font-semibold mt-1"><TrendLabel trend={stats.trend} /></div>
-            </div>
-            <div className="rounded-xl p-4" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
-              <div className="text-xs mb-1" style={{ color: 'var(--color-text-muted)' }}>Highest Score</div>
-              <div className="text-lg font-bold" style={{ color: 'var(--color-success)' }}>
-                {stats.highest ? `${stats.highest.pct.toFixed(1)}%` : '—'}
-              </div>
-              {stats.highest && <div className="text-xs truncate mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{stats.highest.exam.name}</div>}
-            </div>
-            <div className="rounded-xl p-4" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
-              <div className="text-xs mb-1" style={{ color: 'var(--color-text-muted)' }}>Lowest Score</div>
-              <div className="text-lg font-bold" style={{ color: 'var(--color-danger)' }}>
-                {stats.lowest ? `${stats.lowest.pct.toFixed(1)}%` : '—'}
-              </div>
-              {stats.lowest && <div className="text-xs truncate mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{stats.lowest.exam.name}</div>}
+            )}
+            <div className="grid grid-cols-3 gap-3 flex-1">
+              {[
+                { label: 'Overall Average', value: stats.avgPct.toFixed(1) + '%' },
+                { label: 'Class Rank', value: `${ordinal(stats.rank)} of ${studentStats.length}` },
+                { label: 'Exams Taken', value: `${stats.examsTaken} / ${totalExams}` },
+              ].map(card => (
+                <div key={card.label} className="rounded-xl p-4 text-center" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
+                  <div className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>{card.value}</div>
+                  <div className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{card.label}</div>
+                </div>
+              ))}
             </div>
           </div>
 
-          {trendData.length >= 2 && (
-            <div>
-              <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--color-text-secondary)' }}>Performance Trend</h3>
-              <div className="rounded-xl p-4" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
-                <ResponsiveContainer width="100%" height={160}>
+          {/* ── ROW 2: Spider graph + Trend line (side by side) ── */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Spider / Radar chart */}
+            <div className="rounded-xl p-4" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
+              <div className="text-xs font-semibold mb-1" style={{ color: 'var(--color-text-secondary)' }}>Performance Per Subject</div>
+              <div className="text-xs mb-3" style={{ color: 'var(--color-text-muted)' }}>Average score across all exams</div>
+              {radarData.length >= 3 ? (
+                <ResponsiveContainer width="100%" height={220}>
+                  <RadarChart data={radarData}>
+                    <PolarGrid stroke="var(--color-border)" />
+                    <PolarAngleAxis dataKey="subject" tick={{ fontSize: 10, fill: 'var(--color-text-muted)' }} />
+                    <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
+                    <Radar dataKey="avg" stroke="#0BB5C7" fill="#0BB5C7" fillOpacity={0.2} strokeWidth={2}
+                      dot={{ r: 3, fill: '#0BB5C7', strokeWidth: 0 }} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 8, fontSize: 12 }}
+                      formatter={(v: number | undefined) => [`${v ?? 0}%`, 'Avg Score']} />
+                  </RadarChart>
+                </ResponsiveContainer>
+              ) : radarData.length > 0 ? (
+                <div className="space-y-2 py-2">
+                  {radarData.map(d => (
+                    <div key={d.subject} className="flex items-center gap-3">
+                      <span className="text-xs w-20 truncate" style={{ color: 'var(--color-text-secondary)' }}>{d.subject}</span>
+                      <div className="flex-1 h-2 rounded-full" style={{ backgroundColor: 'var(--color-border)' }}>
+                        <div className="h-full rounded-full" style={{ width: `${d.avg}%`, backgroundColor: '#0BB5C7' }} />
+                      </div>
+                      <span className="text-xs font-semibold w-10 text-right" style={{ color: 'var(--color-text-primary)' }}>{d.avg}%</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-center py-8" style={{ color: 'var(--color-text-muted)' }}>No subject data available.</p>
+              )}
+            </div>
+
+            {/* Overall performance trend */}
+            <div className="rounded-xl p-4" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
+              <div className="text-xs font-semibold mb-1" style={{ color: 'var(--color-text-secondary)' }}>Overall Performance Trend</div>
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>Score history across exams</span>
+                <span className="text-xs font-medium ml-auto"><TrendLabel trend={stats.trend} /></span>
+              </div>
+              {trendData.length >= 2 ? (
+                <ResponsiveContainer width="100%" height={220}>
                   <LineChart data={trendData} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                    <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'var(--color-text-muted)' }} tickLine={false} axisLine={false} />
-                    <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: 'var(--color-text-muted)' }} tickLine={false} axisLine={false} />
+                    <XAxis dataKey="name" tick={{ fontSize: 9, fill: 'var(--color-text-muted)' }} tickLine={false} axisLine={false} />
+                    <YAxis domain={[0, 100]} tick={{ fontSize: 9, fill: 'var(--color-text-muted)' }} tickLine={false} axisLine={false} />
                     <Tooltip
                       contentStyle={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 8, fontSize: 12 }}
                       formatter={(v: number | undefined) => [`${v ?? 0}%`, 'Score']}
@@ -439,19 +570,60 @@ export default function PerStudentTab({ className, studentStats, totalExams, tot
                     <Line type="monotone" dataKey="pct" stroke="#0BB5C7" strokeWidth={2} dot={{ r: 3, fill: '#0BB5C7' }} activeDot={{ r: 5 }} />
                   </LineChart>
                 </ResponsiveContainer>
+              ) : (
+                <p className="text-xs text-center py-8" style={{ color: 'var(--color-text-muted)' }}>
+                  {trendData.length === 1 ? 'Need at least 2 exams to show trend.' : 'No exams yet.'}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* ── ROW 3: Per-subject percentile cards ── */}
+          {subjectStats.length > 0 && (
+            <div>
+              <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--color-text-secondary)' }}>Subject Breakdown</h3>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                {subjectStats.map(subj => {
+                  const pctColor = (subj.avgPercentile ?? 0) >= 75 ? '#16A34A' : (subj.avgPercentile ?? 0) >= 50 ? '#0BB5C7' : (subj.avgPercentile ?? 0) >= 25 ? '#D97706' : '#DC2626'
+                  return (
+                    <div key={subj.id} className="rounded-xl p-4" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
+                      <div className="text-xs font-semibold truncate mb-2" style={{ color: 'var(--color-text-secondary)' }}>{subj.name}</div>
+                      {subj.avgPercentile !== null && (
+                        <div className="mb-1">
+                          <div className="text-lg font-bold" style={{ color: pctColor }}>{ordinal(subj.avgPercentile)}</div>
+                          <div className="text-xs" style={{ color: 'var(--color-text-muted)' }}>Avg Percentile</div>
+                        </div>
+                      )}
+                      <div className="mt-2 space-y-0.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>Your Avg Score</span>
+                          <span className="text-xs font-semibold" style={{ color: 'var(--color-text-primary)' }}>{subj.avgGrade!.toFixed(1)}%</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>Top Student Avg</span>
+                          <span className="text-xs font-semibold" style={{ color: '#16A34A' }}>{subj.highestGrade!.toFixed(1)}%</span>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             </div>
           )}
 
+          {/* ── ROW 4: Detailed scores per exam with benchmarking ── */}
           {stats.scores.length > 0 ? (
             <div>
-              <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--color-text-secondary)' }}>Score Per Exam</h3>
+              <h3 className="text-sm font-semibold mb-1" style={{ color: 'var(--color-text-secondary)' }}>Score Per Exam</h3>
+              <p className="text-xs mb-3" style={{ color: 'var(--color-text-muted)' }}>Top score refers to the highest score obtained by a student.</p>
               <CopyableTable
-                headers={['Exam', 'Score', '%', ...relevantSubjects.map(s => `${s.name} Pct.`), 'Result']}
+                headers={['Exam', 'Score', '%', ...relevantSubjects.map(s => `${s.name} Pct.`), 'Top Score', 'Result']}
                 rows={stats.scores.map(s => {
                   const effectivePassing = s.exam.passing_pct_override ?? classPassingPct
                   const passes = s.percentage >= effectivePassing
                   const examSubjMap = subjectPercentileByExam.get(s.exam.id)
+                  const top = highestByExam.get(s.exam.id)
+                  const isTop = top && Math.abs(top.pct - s.percentage) < 0.01
                   return [
                     { display: <span style={{ color: 'var(--color-text-primary)', fontWeight: 500 }}>{s.exam.name}</span>, copy: s.exam.name },
                     { display: <span style={{ color: 'var(--color-text-secondary)', fontFamily: 'monospace', fontSize: 12 }}>{s.raw_score} / {s.total_items}</span>, copy: `${s.raw_score} / ${s.total_items}` },
@@ -465,6 +637,14 @@ export default function PerStudentTab({ className, studentStats, totalExams, tot
                         copy: pct !== undefined ? ordinal(pct) : '—',
                       }
                     }),
+                    {
+                      display: top ? (
+                        <span style={{ fontSize: 12, color: isTop ? '#16A34A' : 'var(--color-text-muted)' }}>
+                          {isTop ? '🏆 ' : ''}{top.pct.toFixed(1)}%
+                        </span>
+                      ) : <span style={{ color: 'var(--color-text-muted)' }}>—</span>,
+                      copy: top ? `${top.pct.toFixed(1)}%` : '—',
+                    },
                     {
                       display: <span className="text-xs px-1.5 py-0.5 rounded font-medium"
                         style={passes ? { backgroundColor: 'rgba(34,197,94,0.12)', color: 'var(--color-success)' } : { backgroundColor: 'rgba(239,68,68,0.12)', color: 'var(--color-danger)' }}>
