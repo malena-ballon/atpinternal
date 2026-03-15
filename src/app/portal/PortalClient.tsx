@@ -464,7 +464,7 @@ export default function PortalClient({ classes, theme }: Props) {
       {/* Step 1: Class */}
       {step === 'class' && (
         <Card>
-          <h2 className="text-lg font-bold mb-1" style={{ color: theme }}>Welcome to the Student Portal</h2>
+          <h2 className="text-lg font-bold mb-1" style={{ color: theme }}>Welcome, Iskolar ng Bayan!</h2>
           <p className="text-sm text-gray-400 mb-6">View your personal performance report. Select your class to get started.</p>
           <label className="block text-xs font-semibold mb-1.5 text-gray-500 uppercase tracking-wide">Your Class</label>
           <select
