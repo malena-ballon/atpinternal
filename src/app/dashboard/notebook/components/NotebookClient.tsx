@@ -146,7 +146,7 @@ function ColorPicker({
   )
 }
 
-function Toolbar({ editor }: { editor: TiptapEditor }) {
+function Toolbar({ editor }: { editor: TiptapEditor | null }) {
   const [blockOpen, setBlockOpen] = useState(false)
   const blockRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
