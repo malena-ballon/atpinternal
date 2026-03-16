@@ -131,11 +131,29 @@ export default function PerStudentTab({ className, studentStats, totalExams, tot
           const pct = subjMap[subj.id]
           if (pct !== undefined) percentiles.push(pct)
         }
+        // Top student avg: highest per-subject average across all students (same for everyone)
+        let highestGrade: number | null = null
+        for (const st of studentStats) {
+          const stGrades: number[] = []
+          for (const sc of st.scores) {
+            const ids = sc.exam.subject_ids ?? (sc.exam.subject_id ? [sc.exam.subject_id] : [])
+            if (!ids.includes(subj.id)) continue
+            if (sc.subject_scores?.length) {
+              const ss = sc.subject_scores.find(x => x.subject_id === subj.id)
+              if (ss && ss.total_items > 0) { stGrades.push((ss.raw_score / ss.total_items) * 100); continue }
+            }
+            if (ids.length === 1) stGrades.push(sc.percentage)
+          }
+          if (stGrades.length > 0) {
+            const stAvg = stGrades.reduce((a, b) => a + b, 0) / stGrades.length
+            if (highestGrade === null || stAvg > highestGrade) highestGrade = stAvg
+          }
+        }
         return {
           id: subj.id,
           name: subj.name,
           avgGrade: grades.length > 0 ? grades.reduce((a, b) => a + b, 0) / grades.length : null,
-          highestGrade: grades.length > 0 ? Math.max(...grades) : null,
+          highestGrade,
           avgPercentile: percentiles.length > 0 ? Math.round(percentiles.reduce((a, b) => a + b, 0) / percentiles.length) : null,
         }
       }).filter(s => s.avgGrade !== null)
@@ -339,15 +357,33 @@ export default function PerStudentTab({ className, studentStats, totalExams, tot
         const pct = subjMap.get(subj.id)
         if (pct !== undefined) percentiles.push(pct)
       }
+      // Top student avg: highest per-subject average across all students (same for everyone)
+      let highestGrade: number | null = null
+      for (const st of studentStats) {
+        const stGrades: number[] = []
+        for (const sc of st.scores) {
+          const ids = sc.exam.subject_ids ?? (sc.exam.subject_id ? [sc.exam.subject_id] : [])
+          if (!ids.includes(subj.id)) continue
+          if (sc.subject_scores?.length) {
+            const ss = sc.subject_scores.find(x => x.subject_id === subj.id)
+            if (ss && ss.total_items > 0) { stGrades.push((ss.raw_score / ss.total_items) * 100); continue }
+          }
+          if (ids.length === 1) stGrades.push(sc.percentage)
+        }
+        if (stGrades.length > 0) {
+          const stAvg = calcMean(stGrades)
+          if (highestGrade === null || stAvg > highestGrade) highestGrade = stAvg
+        }
+      }
       return {
         id: subj.id,
         name: subj.name,
         avgGrade: grades.length > 0 ? calcMean(grades) : null,
-        highestGrade: grades.length > 0 ? Math.max(...grades) : null,
+        highestGrade,
         avgPercentile: percentiles.length > 0 ? Math.round(calcMean(percentiles)) : null,
       }
     }).filter(s => s.avgGrade !== null)
-  }, [stats, relevantSubjects, subjectPercentileByExam])
+  }, [stats, relevantSubjects, subjectPercentileByExam, studentStats])
 
   // ── Highest class score per exam (for benchmarking) ───────────────────────
   const highestByExam = useMemo(() => {

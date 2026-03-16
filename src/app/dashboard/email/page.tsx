@@ -2,6 +2,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
 import EmailInboxClient from './components/EmailInboxClient'
+import type { SentEmail } from './types'
 
 export default async function EmailPage() {
   const supabase = await createClient()
@@ -23,18 +24,4 @@ export default async function EmailPage() {
       initialReplyTo={settings?.reply_to ?? ''}
     />
   )
-}
-
-export interface SentEmail {
-  id: string
-  subject: string
-  to_addresses: { name: string; email: string }[]
-  type: string
-  context: string | null
-  body: string | null
-  sent_by: string | null
-  attachments: { filename: string; storage_path?: string; recipient_email?: string }[]
-  sent_count: number
-  failed_count: number
-  sent_at: string
 }

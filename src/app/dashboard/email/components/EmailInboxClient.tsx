@@ -4,7 +4,7 @@ import { useState, useMemo } from 'react'
 import { format, isToday, isThisWeek } from 'date-fns'
 import { Mail, Search, Settings, ChevronRight, Users, CheckCircle2, XCircle, AlertCircle, Loader2, Check, CornerDownLeft, FileText, X, Download, Trash2 } from 'lucide-react'
 import { saveEmailSettings, getEmailAttachmentUrl, deleteEmails } from '@/app/actions'
-import type { SentEmail } from '../page'
+import type { SentEmail } from '../types'
 
 // ── Type metadata ─────────────────────────────────────────────────────────────
 
