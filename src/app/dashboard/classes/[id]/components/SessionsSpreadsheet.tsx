@@ -118,6 +118,19 @@ const STATUS_COLORS: Record<SessionStatus, { backgroundColor: string; color: str
   rescheduled: { backgroundColor: 'rgba(99,102,241,0.12)',  color: '#4F46E5' },
 }
 
+function stripHtml(html: string): string {
+  if (!html) return ''
+  return html
+    .replace(/<li[^>]*>/gi, '• ')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 function fmt12(t: string): string {
   if (!t) return '—'
   const [h, m] = t.split(':').map(Number)
@@ -315,8 +328,8 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
           startTime: row.start_time,
           endTime: row.end_time,
           teacher: teachers.find(t => t.id === row.teacher_id)?.name ?? '',
-          subject: row.subject_ids.map(id => subjects.find(s => s.id === id)?.name).filter(Boolean).join(', '),
-          topic: row.topic || '',
+          subject: row.subject_ids.map(id => id === '__assessment__' ? 'Assessment' : subjects.find(s => s.id === id)?.name).filter(Boolean).join(', '),
+          topic: stripHtml(row.topic || ''),
           status: row.status,
         }
       })

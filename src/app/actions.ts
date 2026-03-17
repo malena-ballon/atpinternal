@@ -337,7 +337,7 @@ export async function emailSessionSchedule(
 
   let query = supabase
     .from('sessions')
-    .select('id, date, start_time, end_time, status, subjects(name), teachers(name)')
+    .select('id, date, start_time, end_time, status, topic, subject_id, subject_ids, is_assessment, subjects(name), teachers(name)')
     .eq('class_id', classId)
     .order('date')
     .order('start_time')
@@ -354,7 +354,24 @@ export async function emailSessionSchedule(
       let day = '—'
       try { day = new Date(d + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' }) } catch {}
       const teacher = (s as any).teachers?.name ?? (s as any).teachers?.[0]?.name ?? '—'
-      const subject = (s as any).subjects?.name ?? (s as any).subjects?.[0]?.name ?? '—'
+      const subjectIds: string[] = (s as any).subject_ids?.length
+        ? (s as any).subject_ids
+        : (s as any).subject_id ? [(s as any).subject_id] : []
+      const isAssessment = (s as any).is_assessment || subjectIds.includes('__assessment__')
+      const joinedSubjectName = (s as any).subjects?.name ?? (s as any).subjects?.[0]?.name ?? ''
+      const parts: string[] = []
+      if (joinedSubjectName) parts.push(joinedSubjectName)
+      if (isAssessment) parts.push('Assessment')
+      const subject = parts.length ? parts.join(', ') : '—'
+      const rawTopic = (s as any).topic as string | null | undefined
+      const topic = rawTopic
+        ? rawTopic
+            .replace(/<li[^>]*>/gi, '• ').replace(/<\/li>/gi, '\n')
+            .replace(/<\/p>/gi, '\n').replace(/<br\s*\/?>/gi, '\n')
+            .replace(/<[^>]+>/g, '')
+            .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ')
+            .replace(/\n{3,}/g, '\n\n').trim()
+        : ''
       return {
         index: i + 1,
         date: d ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—',
@@ -363,6 +380,7 @@ export async function emailSessionSchedule(
         endTime: s.end_time?.slice(0, 5) ?? '',
         teacher,
         subject,
+        topic,
         status: s.status,
       }
     })
