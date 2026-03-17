@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { Loader2, Plus, Minus } from 'lucide-react'
 import Modal from '@/app/dashboard/components/Modal'
 import type { TeacherRow, AvailabilityEntry } from '@/types'
-import { saveTeacher, logActivity } from '@/app/actions'
+import { saveTeacher, sendTeacherInvite, logActivity } from '@/app/actions'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
@@ -105,7 +105,17 @@ export default function TeacherFormModal({ teacher, onClose, onSaved }: Props) {
 
     if (err) { setLoading(false); setError(err); return }
 
-    // Log the activity
+    // Auto-send invite email when adding a new teacher
+    if (!isEdit) {
+      const inviteRes = await sendTeacherInvite(data!.id)
+      if (!inviteRes.ok) {
+        setLoading(false)
+        setError(`Teacher saved, but invite email failed: ${inviteRes.error ?? 'unknown error'}`)
+        onSaved(data as TeacherRow)
+        return
+      }
+    }
+
     await logActivity(
       isEdit ? 'updated_profile' : 'added_teacher',
       'teacher',
@@ -113,7 +123,7 @@ export default function TeacherFormModal({ teacher, onClose, onSaved }: Props) {
       payload.name,
       isEdit
         ? `Updated teacher profile: ${payload.name} (${payload.email})${payload.specialization ? `, specialization: ${payload.specialization}` : ''}`
-        : `Added new teacher: ${payload.name} (${payload.email})${payload.specialization ? `, specialization: ${payload.specialization}` : ''}`
+        : `Added new teacher: ${payload.name} (${payload.email}) — invite email sent`
     )
 
     setLoading(false)

@@ -80,14 +80,17 @@ export async function sendTeacherInvite(teacherId: string): Promise<{ ok: boolea
     .single()
 
   if (!teacher) return { ok: false, error: 'Teacher not found' }
+  if (!teacher.email?.trim()) return { ok: false, error: 'This teacher has no email address on file. Add their email first.' }
 
-  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000'
-  const registerUrl = `${baseUrl}/register?email=${encodeURIComponent(teacher.email)}`
+  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL ?? process.env.NEXT_PUBLIC_SITE_URL ?? '').replace(/\/$/, '')
+  if (!baseUrl) return { ok: false, error: 'NEXT_PUBLIC_APP_URL is not set — cannot generate registration link.' }
+
+  const registerUrl = `${baseUrl}/register?email=${encodeURIComponent(teacher.email.trim())}`
 
   const replyTo = await getReplyTo()
-  const { error } = await resend.emails.send({
+  const { data: sendData, error } = await resend.emails.send({
     from: FROM_EMAIL,
-    to: teacher.email,
+    to: teacher.email.trim(),
     ...(replyTo ? { replyTo } : {}),
     subject: "You're invited to join ATP Internal",
     html: `
@@ -103,7 +106,11 @@ export async function sendTeacherInvite(teacherId: string): Promise<{ ok: boolea
     `.trim(),
   })
 
-  if (error) return { ok: false, error: error.message }
+  if (error) {
+    console.error('[sendTeacherInvite] Resend error:', error)
+    return { ok: false, error: error.message }
+  }
+  console.log('[sendTeacherInvite] Sent to', teacher.email, '— Resend id:', sendData?.id)
   await logSentEmail({
     subject: "You're invited to join ATP Internal",
     toAddresses: [{ name: teacher.name, email: teacher.email }],
@@ -172,6 +179,26 @@ export async function saveTeacher(
     if (error) return { data: null, error: error.message }
     return { data }
   } else {
+    // Check if a teacher with this email already exists (no account yet — safe to re-invite)
+    const { data: existing } = await supabase
+      .from('teachers')
+      .select('id, user_id, name, specialization, email, availability')
+      .eq('email', payload.email.toLowerCase())
+      .maybeSingle()
+    if (existing) {
+      if (existing.user_id) {
+        return { data: null, error: 'A teacher with this email already has an account.' }
+      }
+      // No account yet — update their info and return so invite can be re-sent
+      const { data: updated, error: updErr } = await supabase
+        .from('teachers')
+        .update(payload)
+        .eq('id', existing.id)
+        .select('id, user_id, name, specialization, email, availability')
+        .single()
+      if (updErr) return { data: null, error: updErr.message }
+      return { data: updated }
+    }
     const { data, error } = await supabase
       .from('teachers')
       .insert(payload)
