@@ -349,7 +349,7 @@ export default function ScheduleTable({
     const key = `${activeCell.r}-${activeCell.c}`
     requestAnimationFrame(() => {
       const el = tableRef.current?.querySelector<HTMLInputElement>(`[data-cell="${key}"] input:not([type="date"]):not([type="checkbox"])`)
-      if (el) { el.focus(); el.select() }
+      if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length) }
     })
   }, [activeCell])
 
@@ -812,7 +812,8 @@ export default function ScheduleTable({
                         {(() => {
                           const classSubjects = subjectsByClass.get(s.class_id) ?? []
                           const ids = s.subject_ids?.length ? s.subject_ids : s.subject_id ? [s.subject_id] : []
-                          const names = ids.map(id => id === '__assessment__' ? 'Assessment' : classSubjects.find(sub => sub.id === id)?.name ?? s.subjects?.name).filter(Boolean) as string[]
+                          const effectiveIds = (s as any).is_assessment && !ids.includes('__assessment__') ? ['__assessment__', ...ids] : ids
+                          const names = effectiveIds.map(id => id === '__assessment__' ? 'Assessment' : classSubjects.find(sub => sub.id === id)?.name ?? s.subjects?.name).filter(Boolean) as string[]
                           return names.length > 0
                             ? <div className="flex flex-wrap gap-1">{names.map((n, ni) => <span key={ni} className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: 'rgba(11,181,199,0.1)', color: '#0BB5C7' }}>{n}</span>)}</div>
                             : <span style={{ color: 'var(--color-text-muted)' }}>—</span>

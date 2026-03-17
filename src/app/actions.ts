@@ -380,6 +380,13 @@ export async function emailSessionSchedule(
       sentCount: 1,
       failedCount: 0,
     })
+    await logActivity(
+      'sent_session_schedule',
+      'class',
+      classId,
+      className,
+      `Sent session schedule PDF to ${student.name} (${student.email}) for ${className}.`
+    )
     return { ok: true, skipped: false }
   } catch (e) {
     console.error('[emailSessionSchedule] failed', e)
@@ -811,6 +818,24 @@ export async function sendStudentAccessCodes(
       console.error('[sendStudentAccessCodes] exception', r.email, e)
       failed++
     }
+  }
+  if (sent > 0) {
+    await logSentEmail({
+      subject: `Student Portal Access Code — ${className}`,
+      toAddresses: recipients.slice(0, sent).map(r => ({ name: r.name, email: r.email })),
+      type: 'portal_code',
+      context: className,
+      body: `Portal access codes sent to ${sent} student(s) for ${className}.`,
+      sentCount: sent,
+      failedCount: failed,
+    })
+    await logActivity(
+      'sent_portal_codes',
+      'class',
+      null,
+      className,
+      `Sent portal access codes to ${sent} student(s) for ${className}${failed > 0 ? ` (${failed} failed)` : ''}.`
+    )
   }
   return { sent, failed }
 }

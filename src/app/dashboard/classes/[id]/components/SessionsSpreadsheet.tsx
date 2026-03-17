@@ -344,7 +344,6 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
     if (!generatedPDF) return
     setIsSending(true)
     try {
-      downloadBlob(generatedPDF, pdfFilename)
       const toBase64 = (blob: Blob): Promise<string> => new Promise((res, rej) => {
         const reader = new FileReader()
         reader.onload = () => res((reader.result as string).split(',')[1])
@@ -515,7 +514,7 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
     const key = `${activeCell.r}-${activeCell.c}`
     requestAnimationFrame(() => {
       const el = tableRef.current?.querySelector<HTMLInputElement>(`[data-cell="${key}"] input:not([type="date"]):not([type="checkbox"])`)
-      if (el) { el.focus(); el.select() }
+      if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length) }
     })
   }, [activeCell])
 

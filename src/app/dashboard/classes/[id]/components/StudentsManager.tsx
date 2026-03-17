@@ -195,7 +195,7 @@ export default function StudentsManager({ classId, className, initialStudents }:
     const key = `${activeCell.r}-${activeCell.c}`
     requestAnimationFrame(() => {
       const el = tableRef.current?.querySelector<HTMLInputElement>(`[data-cell="${key}"] input:not([type="checkbox"])`)
-      if (el) { el.focus(); el.select() }
+      if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length) }
     })
   }, [activeCell])
 
