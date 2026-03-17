@@ -82,8 +82,11 @@ export async function sendTeacherInvite(teacherId: string): Promise<{ ok: boolea
   if (!teacher) return { ok: false, error: 'Teacher not found' }
   if (!teacher.email?.trim()) return { ok: false, error: 'This teacher has no email address on file. Add their email first.' }
 
-  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL ?? process.env.NEXT_PUBLIC_SITE_URL ?? '').replace(/\/$/, '')
-  if (!baseUrl) return { ok: false, error: 'NEXT_PUBLIC_APP_URL is not set — cannot generate registration link.' }
+  const { headers } = await import('next/headers')
+  const headersList = await headers()
+  const host = headersList.get('host') ?? 'localhost:3000'
+  const proto = host.startsWith('localhost') ? 'http' : 'https'
+  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL ?? process.env.NEXT_PUBLIC_SITE_URL ?? `${proto}://${host}`).replace(/\/$/, '')
 
   const registerUrl = `${baseUrl}/register?email=${encodeURIComponent(teacher.email.trim())}`
 
