@@ -538,7 +538,7 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
       if (e.key === 'Escape') { setActiveCell(null); return }
       if ((e.key === 'Backspace' || e.key === 'Delete') && sel) {
         const el = document.activeElement
-        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || (el instanceof HTMLElement && el.isContentEditable)) return
         e.preventDefault()
         const r1 = Math.min(sel.r1, sel.r2), r2 = Math.max(sel.r1, sel.r2)
         const c1 = Math.min(sel.c1, sel.c2), c2 = Math.max(sel.c1, sel.c2)
@@ -564,7 +564,7 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
       }
       if (!sel || e.altKey || e.metaKey || e.ctrlKey || e.key?.length !== 1) return
       const el = document.activeElement
-      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || (el instanceof HTMLElement && el.isContentEditable)) return
       const r1 = Math.min(sel.r1, sel.r2), r2 = Math.max(sel.r1, sel.r2)
       const c1 = Math.min(sel.c1, sel.c2), c2 = Math.max(sel.c1, sel.c2)
       if (r1 !== r2 || c1 !== c2) return

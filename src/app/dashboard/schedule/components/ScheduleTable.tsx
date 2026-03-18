@@ -46,6 +46,24 @@ const STATUS_COLORS: Record<SessionStatus, { backgroundColor: string; color: str
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+function stripHtml(html: string): string {
+  if (!html) return ''
+  return html
+    .replace(/<li[^>]*>/gi, '• ')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 function fmt12(t: string): string {
   if (!t) return '—'
   const [h, m] = t.split(':').map(Number)
@@ -360,7 +378,7 @@ export default function ScheduleTable({
       if (e.key === 'Escape') { setActiveCell(null); return }
       if ((e.key === 'Backspace' || e.key === 'Delete') && sel) {
         const el = document.activeElement
-        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || (el instanceof HTMLElement && el.isContentEditable)) return
         e.preventDefault()
         const r1 = Math.min(sel.r1, sel.r2), r2 = Math.max(sel.r1, sel.r2)
         const c1 = Math.min(sel.c1, sel.c2), c2 = Math.max(sel.c1, sel.c2)
@@ -386,7 +404,7 @@ export default function ScheduleTable({
       }
       if (!sel || e.altKey || e.metaKey || e.ctrlKey || e.key?.length !== 1) return
       const el = document.activeElement
-      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || (el instanceof HTMLElement && el.isContentEditable)) return
       const r1 = Math.min(sel.r1, sel.r2), r2 = Math.max(sel.r1, sel.r2)
       const c1 = Math.min(sel.c1, sel.c2), c2 = Math.max(sel.c1, sel.c2)
       if (r1 !== r2 || c1 !== c2) return
@@ -567,8 +585,14 @@ export default function ScheduleTable({
         date: s.date ? format(parseISO(s.date), 'MMM d, yyyy') : '—',
         day: s.date ? format(parseISO(s.date), 'EEE') : '—',
         time: s.start_time && s.end_time ? `${fmt12(s.start_time)} – ${fmt12(s.end_time)}` : '—',
-        subject: s.subjects?.name ?? '',
-        topic: s.topic ?? '',
+        subject: (() => {
+          const classSubjects = subjectsByClass.get(s.class_id) ?? []
+          const ids: string[] = s.subject_ids?.length ? s.subject_ids : s.subject_id ? [s.subject_id] : []
+          const effectiveIds = (s as any).is_assessment && !ids.includes('__assessment__') ? ['__assessment__', ...ids] : ids
+          const names = effectiveIds.map((id: string) => id === '__assessment__' ? 'Assessment' : classSubjects.find(sub => sub.id === id)?.name ?? (s as any).subjects?.name).filter(Boolean)
+          return names.join(', ') || '—'
+        })(),
+        topic: stripHtml(s.topic ?? ''),
         className: s.classes?.name ?? '',
         teacher: s.teachers?.name ?? '',
         status: s.status,
