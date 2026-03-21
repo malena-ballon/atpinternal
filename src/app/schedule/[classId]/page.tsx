@@ -3,6 +3,7 @@ import Image from 'next/image'
 import { createServiceClient } from '@/utils/supabase/service'
 import { BookOpen, CalendarDays } from 'lucide-react'
 import PublicSessionsTable from './PublicSessionsTable'
+import { sanitizeRichHtml } from '@/lib/sanitize'
 
 export default async function PublicSchedulePage({ params }: { params: Promise<{ classId: string }> }) {
   const { classId } = await params
@@ -24,8 +25,16 @@ export default async function PublicSchedulePage({ params }: { params: Promise<{
   if (!cls || cls.status !== 'active') notFound()
 
   const extra = clsExtra as { public_notes?: string | null; public_notes_position?: string | null } | null
-  const publicNotes = extra?.public_notes ?? null
+  // Sanitize admin-authored HTML before it is passed to client components
+  const publicNotes = sanitizeRichHtml(extra?.public_notes)
   const notesPosition = extra?.public_notes_position === 'above' ? 'above' : 'below'
+
+  // Sanitize session topics server-side so dangerouslySetInnerHTML in the
+  // client component only ever receives trusted HTML
+  const sanitizedSessions = (sessions ?? []).map(s => ({
+    ...s,
+    topic: sanitizeRichHtml((s as { topic?: string | null }).topic),
+  }))
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#f8fafc' }}>
@@ -94,7 +103,7 @@ export default async function PublicSchedulePage({ params }: { params: Promise<{
         ) : (
           <>
             <PublicSessionsTable
-              sessions={sessions as unknown as { id: string; date: string; start_time: string; end_time: string; status: string; topic?: string | null; subject_ids?: string[] | null; is_assessment?: boolean | null; subjects?: { name: string } | null }[]}
+              sessions={sanitizedSessions as unknown as { id: string; date: string; start_time: string; end_time: string; status: string; topic?: string | null; subject_ids?: string[] | null; is_assessment?: boolean | null; subjects?: { name: string } | null }[]}
               subjects={subjects}
             />
           </>

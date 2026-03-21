@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Image from 'next/image'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
-import { createClient } from '@/utils/supabase/client'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -21,43 +20,31 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      const supabase = createClient()
-
-      const { data, error: authError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
       })
 
-      if (authError) {
-        setError('Invalid email or password. Please try again.')
+      const data = await res.json()
+
+      if (!res.ok) {
+        if (res.status === 429) {
+          setError('Too many login attempts. Please wait a few minutes and try again.')
+        } else {
+          setError(data.error ?? 'Sign in failed. Please try again.')
+        }
         return
       }
 
-      const { data: profile, error: profileError } = await supabase
-        .from('users')
-        .select('status')
-        .eq('id', data.user.id)
-        .single()
-
-      if (profileError || !profile) {
-        setError('Account not found. Please contact your administrator.')
-        await supabase.auth.signOut()
-        return
-      }
-
-      if (profile.status === 'rejected') {
-        setError('Your account access has been denied. Please contact the administrator.')
-        await supabase.auth.signOut()
-        return
-      }
-
-      if (profile.status === 'pending') {
+      if (data.status === 'pending' || data.status === 'rejected') {
         router.push('/pending')
-        return
+      } else {
+        router.push('/dashboard')
       }
-
-      router.push('/dashboard')
       router.refresh()
+    } catch {
+      setError('Network error. Please check your connection and try again.')
     } finally {
       setLoading(false)
     }

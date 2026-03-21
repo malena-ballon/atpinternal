@@ -2,3 +2,11 @@ node_modules/
 .next/
 .Trash/
 .DS_Store
+
+# Environment variable files — must never be committed
+.env
+.env.local
+.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local

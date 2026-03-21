@@ -5,8 +5,6 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Image from 'next/image'
 import { Eye, EyeOff, Loader2, Mail } from 'lucide-react'
-import { createClient } from '@/utils/supabase/client'
-import { ensureUserProfile } from '@/app/actions'
 
 export default function RegisterPage() {
   const router = useRouter()
@@ -35,6 +33,10 @@ export default function RegisterPage() {
       setError('Password must be at least 8 characters.')
       return
     }
+    if (!/[A-Za-z]/.test(password) || !/[0-9]/.test(password)) {
+      setError('Password must contain at least one letter and one number.')
+      return
+    }
     if (password !== confirmPassword) {
       setError('Passwords do not match.')
       return
@@ -42,39 +44,36 @@ export default function RegisterPage() {
 
     setLoading(true)
     try {
-      const supabase = createClient()
-
-      const { data, error: signUpError } = await supabase.auth.signUp({
-        email,
-        password,
-        options: { data: { name } },
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, password }),
       })
 
-      if (signUpError) {
-        setError(signUpError.message)
+      const data = await res.json()
+
+      if (!res.ok) {
+        if (res.status === 429) {
+          setError('Too many registration attempts. Please try again later.')
+        } else {
+          setError(data.error ?? 'Registration failed. Please try again.')
+        }
         return
       }
 
-      if (!data.user) {
-        setError('Registration failed. Please try again.')
-        return
-      }
-
-      // If Supabase requires email confirmation, session will be null
-      if (!data.session) {
+      if (data.needsConfirmation) {
         setCheckEmail(true)
         return
       }
 
-      // Reliably create the users row and auto-approve invited teachers
-      const { status } = await ensureUserProfile(data.user.id, name, email)
-
-      if (status === 'active') {
+      if (data.status === 'active') {
         router.push('/dashboard')
       } else {
         router.push('/pending')
       }
       router.refresh()
+    } catch {
+      setError('Network error. Please check your connection and try again.')
     } finally {
       setLoading(false)
     }
@@ -179,7 +178,7 @@ export default function RegisterPage() {
                 onChange={e => setPassword(e.target.value)}
                 required
                 autoComplete="new-password"
-                placeholder="Min. 8 characters"
+                placeholder="Min. 8 characters, letter + number"
                 className="w-full px-4 py-3 pr-11 rounded-lg border border-gray-200 text-navy placeholder-gray-400 text-sm focus:outline-none focus:border-brand-cyan focus:ring-2 focus:ring-brand-cyan/20 transition-all"
               />
               <button

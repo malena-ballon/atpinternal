@@ -3,6 +3,8 @@ import { NextResponse, type NextRequest } from 'next/server'
 
 // Auth pages — redirect logged-in users away from these
 const AUTH_PATHS = ['/login', '/register', '/auth']
+// API routes that must be reachable without a session
+const PUBLIC_API_PATHS = ['/api/auth/login', '/api/auth/register']
 // Fully public — anyone can access, logged in or not (no redirect)
 const OPEN_PATHS = ['/schedule', '/portal']
 // Accessible with a session regardless of approval status
@@ -46,8 +48,9 @@ export async function middleware(request: NextRequest) {
   const isOpen = OPEN_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'))
   const isSemiPublic = SEMI_PUBLIC_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'))
 
-  // ── Fully public pages — let anyone through ─────────────────
-  if (isOpen) return supabaseResponse
+  // ── Fully public pages / public API routes — let anyone through
+  const isPublicApi = PUBLIC_API_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'))
+  if (isOpen || isPublicApi) return supabaseResponse
 
   // ── No session ──────────────────────────────────────────────
   if (!user) {

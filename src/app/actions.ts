@@ -4,6 +4,8 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { redirect } from 'next/navigation'
 import { resend, FROM_EMAIL } from '@/utils/resend'
+import { sanitizeRichHtml } from '@/lib/sanitize'
+import { rateLimit } from '@/lib/rate-limit'
 
 export async function signOut() {
   const supabase = await createClient()
@@ -129,9 +131,10 @@ export async function sendTeacherInvite(teacherId: string): Promise<{ ok: boolea
 // ── Public notes ───────────────────────────────────────────────────────────────
 export async function savePublicNotes(classId: string, html: string, position: 'above' | 'below'): Promise<{ ok: boolean; error?: string }> {
   const supabase = await createClient()
+  const safeHtml = sanitizeRichHtml(html) || null
   const { error } = await supabase
     .from('classes')
-    .update({ public_notes: html || null, public_notes_position: position })
+    .update({ public_notes: safeHtml, public_notes_position: position })
     .eq('id', classId)
   if (error) return { ok: false, error: error.message }
   return { ok: true }
@@ -928,6 +931,25 @@ export async function getPortalStudentReport(
     studentId: string
   }
 }> {
+  // Rate limit: 10 attempts per student per 15 minutes (prevents code brute-force)
+  const { headers: getHeaders } = await import('next/headers')
+  const headersList = await getHeaders()
+  const ip = headersList.get('x-forwarded-for')?.split(',')[0].trim() ?? 'unknown'
+  const rl = rateLimit(`portal:${studentId}:${ip}`, { max: 10, windowMs: 15 * 60 * 1000 })
+  if (!rl.allowed) {
+    console.warn(`[portal] Rate limit exceeded studentId=${studentId} ip=${ip}`)
+    return { ok: false, error: 'Too many attempts. Please wait a few minutes and try again.' }
+  }
+
+  // Validate input lengths to prevent oversized payloads
+  if (
+    typeof studentId !== 'string' || studentId.length > 100 ||
+    typeof classId !== 'string' || classId.length > 100 ||
+    typeof code !== 'string' || code.length > 20
+  ) {
+    return { ok: false, error: 'Invalid input.' }
+  }
+
   const supabase = createServiceClient()
 
   // Verify code
@@ -938,6 +960,7 @@ export async function getPortalStudentReport(
     .single()
 
   if (!codeRow || codeRow.code.toUpperCase() !== code.trim().toUpperCase()) {
+    console.warn(`[portal] Incorrect code attempt studentId=${studentId} ip=${ip}`)
     return { ok: false, error: 'Incorrect code. Please try again.' }
   }
 
