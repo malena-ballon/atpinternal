@@ -82,6 +82,7 @@ export default function PerSubjectTab({ className, examStats, studentStats, clas
   // Email step state
   const [generatedPDFs, setGeneratedPDFs] = useState<GeneratedPDF[]>([])
   const [emailRecipients, setEmailRecipients] = useState<EmailRecipient[]>([])
+  const [exportError, setExportError] = useState<string | null>(null)
 
   const filteredSubjects = subjects.filter(s =>
     s.toLowerCase().includes(searchQuery.toLowerCase())
@@ -249,6 +250,7 @@ export default function PerSubjectTab({ className, examStats, studentStats, clas
 
   async function goToEmailStep() {
     setIsExporting(true)
+    setExportError(null)
     try {
       const pdfs = await generateSubjectPDFs()
       setGeneratedPDFs(pdfs)
@@ -258,7 +260,7 @@ export default function PerSubjectTab({ className, examStats, studentStats, clas
       setEmailRecipients(recipientSource.map(s => ({ id: s.id, name: s.name, email: s.email, enabled: true })))
       setExportStep('email')
     } catch (e) {
-      console.error('PDF generation failed:', e)
+      setExportError(e instanceof Error ? e.message : 'PDF generation failed. Please try again.')
     } finally {
       setIsExporting(false)
     }
@@ -436,6 +438,9 @@ export default function PerSubjectTab({ className, examStats, studentStats, clas
                     </div>
                   ))}
                 </div>
+                {exportError && (
+                  <p className="text-xs mb-2 shrink-0" style={{ color: 'var(--color-danger)' }}>{exportError}</p>
+                )}
                 <div className="flex justify-between gap-3 pt-4 mt-4 shrink-0" style={{ borderTop: '1px solid var(--color-border)' }}>
                   <button onClick={() => { setExportStep(1); setSearchQuery('') }} className="px-4 py-2 text-sm font-medium rounded-xl" style={{ color: 'var(--color-text-muted)' }}>← Back</button>
                   <div className="flex gap-3">
@@ -480,6 +485,9 @@ export default function PerSubjectTab({ className, examStats, studentStats, clas
                     </label>
                   )) : <p className="text-sm text-center py-4" style={{ color: 'var(--color-text-muted)' }}>No students found.</p>}
                 </div>
+                {exportError && (
+                  <p className="text-xs mb-2 shrink-0" style={{ color: 'var(--color-danger)' }}>{exportError}</p>
+                )}
                 <div className="flex justify-between gap-3 pt-4 shrink-0" style={{ borderTop: '1px solid var(--color-border)' }}>
                   <button onClick={() => { setExportStep(2); setSearchQuery('') }} className="px-4 py-2 text-sm font-medium rounded-xl" style={{ color: 'var(--color-text-muted)' }}>← Back</button>
                   <div className="flex gap-3">

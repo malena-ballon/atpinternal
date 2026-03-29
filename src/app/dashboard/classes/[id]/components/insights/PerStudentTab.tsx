@@ -57,6 +57,7 @@ export default function PerStudentTab({ className, studentStats, totalExams, tot
 
   const [generatedPDFs, setGeneratedPDFs] = useState<GeneratedPDF[]>([])
   const [emailRecipients, setEmailRecipients] = useState<EmailRecipient[]>([])
+  const [exportError, setExportError] = useState<string | null>(null)
 
   const stats = studentStats.find(s => s.student.id === selectedId)
   const filteredStudents = studentStats.filter(s =>
@@ -206,6 +207,7 @@ export default function PerStudentTab({ className, studentStats, totalExams, tot
   async function goToEmailStep() {
     if (exportSelection.length === 0) return
     setIsExporting(true)
+    setExportError(null)
     try {
       const pdfs = await generateStudentPDFs(exportSelection)
       setGeneratedPDFs(pdfs)
@@ -217,7 +219,7 @@ export default function PerStudentTab({ className, studentStats, totalExams, tot
       )
       setExportStep('email')
     } catch (e) {
-      console.error('PDF generation failed:', e)
+      setExportError(e instanceof Error ? e.message : 'PDF generation failed. Please try again.')
     } finally {
       setIsExporting(false)
     }
@@ -471,6 +473,9 @@ export default function PerStudentTab({ className, studentStats, totalExams, tot
                     <p className="text-sm text-center py-4" style={{ color: 'var(--color-text-muted)' }}>No students match.</p>
                   )}
                 </div>
+                {exportError && (
+                  <p className="text-xs mb-2 shrink-0" style={{ color: 'var(--color-danger)' }}>{exportError}</p>
+                )}
                 <div className="flex justify-end gap-3 pt-4 shrink-0" style={{ borderTop: '1px solid var(--color-border)' }}>
                   <button onClick={closeModal} className="px-4 py-2 text-sm font-medium rounded-xl" style={{ color: 'var(--color-text-muted)' }}>Cancel</button>
                   <button

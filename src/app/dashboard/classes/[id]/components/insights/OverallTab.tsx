@@ -30,9 +30,11 @@ export default function OverallTab({ className, classOverTime, studentStats, cla
   const [emailRecipients, setEmailRecipients] = useState<EmailRecipient[]>([])
   const [isGenerating, setIsGenerating] = useState(false)
   const [isSending, setIsSending] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
 
   async function handleExport() {
     setIsGenerating(true)
+    setExportError(null)
     try {
       const { pdf } = await import('@react-pdf/renderer')
       const { default: ClassReportPDF } = await import('../pdf/ClassReportPDF')
@@ -56,7 +58,7 @@ export default function OverallTab({ className, classOverTime, studentStats, cla
       await logActivity('exported_pdf', 'class', null, className, `Generated Class Report PDF for: ${className}`)
       setShowEmailModal(true)
     } catch (e) {
-      console.error('PDF generation failed:', e)
+      setExportError(e instanceof Error ? e.message : 'PDF generation failed. Please try again.')
     } finally {
       setIsGenerating(false)
     }
@@ -179,8 +181,11 @@ export default function OverallTab({ className, classOverTime, studentStats, cla
       )}
 
       {/* Export */}
-      <div className="flex justify-end">
+      <div className="flex flex-col items-end gap-2">
         <ExportButton onExport={handleExport} label={isGenerating ? 'Preparing...' : 'Export Class Report'} />
+        {exportError && (
+          <p className="text-xs" style={{ color: 'var(--color-danger)' }}>{exportError}</p>
+        )}
       </div>
 
       {/* Summary row */}

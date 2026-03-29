@@ -205,24 +205,26 @@ function ReportView({
         {stats.student.school && <p className="text-sm mt-0.5" style={{ color: 'rgba(255,255,255,0.7)' }}>{stats.student.school}</p>}
       </div>
 
-      {/* Row 1: UPCAT + 3 stat cards */}
-      <div className="flex items-stretch gap-3">
+      {/* Row 1: UPCAT countdown + 3 stat cards */}
+      <div className="space-y-3">
         {daysUntilUpcat > 0 && (
-          <div className="flex flex-col items-center justify-center px-4 py-2 gap-0.5">
-            <span className="text-3xl font-black leading-none" style={{ color: upcatColor }}>{daysUntilUpcat}</span>
-            <span className="text-xs font-bold tracking-wide uppercase" style={{ color: upcatColor }}>days until UPCAT</span>
-            <span className="text-xs text-gray-400">Aug 6, 2026</span>
+          <div className="flex items-center justify-center gap-4 rounded-xl px-4 py-3" style={card}>
+            <span className="text-4xl font-black leading-none" style={{ color: upcatColor }}>{daysUntilUpcat}</span>
+            <div>
+              <div className="text-xs font-bold tracking-wide uppercase" style={{ color: upcatColor }}>Days Until UPCAT</div>
+              <div className="text-xs text-gray-400">Aug 6, 2026</div>
+            </div>
           </div>
         )}
-        <div className="grid grid-cols-3 gap-3 flex-1">
+        <div className="grid grid-cols-3 gap-3">
           {[
             { label: 'Overall Average', value: stats.avgPct.toFixed(1) + '%' },
             { label: 'Class Rank', value: `${ordinal(stats.rank)} of ${allStats.length}` },
             { label: 'Exams Taken', value: `${stats.examsTaken} / ${totalExams}` },
           ].map(c => (
-            <div key={c.label} className="rounded-xl p-4 text-center" style={card}>
-              <div className="text-xl font-bold" style={{ color: '#111827' }}>{c.value}</div>
-              <div className="text-xs mt-0.5 text-gray-400">{c.label}</div>
+            <div key={c.label} className="rounded-xl p-3 text-center" style={card}>
+              <div className="text-base sm:text-xl font-bold leading-tight" style={{ color: '#111827' }}>{c.value}</div>
+              <div className="text-xs mt-0.5 text-gray-400 leading-tight">{c.label}</div>
             </div>
           ))}
         </div>
@@ -328,14 +330,16 @@ function ReportView({
               <table className="w-full text-sm">
                 <thead>
                   <tr style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid #e5e7eb' }}>
-                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Exam</th>
-                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Score</th>
-                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">%</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Exam</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Score</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">%</th>
                     {relevantSubjects.map(s => (
-                      <th key={s.id} className="px-4 py-2.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">{s.name} Pct.</th>
+                      <th key={s.id} className="px-3 py-2.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">
+                        {s.name.length > 8 ? s.name.slice(0, 7) + '…' : s.name} Pct.
+                      </th>
                     ))}
-                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Top Score</th>
-                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Result</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Top</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Result</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -346,21 +350,21 @@ function ReportView({
                     const isTop = top && Math.abs(top.pct - s.percentage) < 0.01
                     return (
                       <tr key={s.id} style={{ borderBottom: i < stats.scores.length - 1 ? '1px solid #f1f5f9' : 'none', backgroundColor: i % 2 === 1 ? '#fafafa' : '#fff' }}>
-                        <td className="px-4 py-3 font-medium text-gray-800">{s.exam.name}</td>
-                        <td className="px-4 py-3 text-gray-500 font-mono text-xs">{s.raw_score} / {s.total_items}</td>
-                        <td className="px-4 py-3 font-semibold text-gray-800 font-mono text-xs">{s.percentage.toFixed(1)}%</td>
+                        <td className="px-3 py-2.5 font-medium text-gray-800 text-xs whitespace-nowrap max-w-[140px] truncate">{s.exam.name}</td>
+                        <td className="px-3 py-2.5 text-gray-500 font-mono text-xs whitespace-nowrap">{s.raw_score} / {s.total_items}</td>
+                        <td className="px-3 py-2.5 font-semibold text-gray-800 font-mono text-xs whitespace-nowrap">{s.percentage.toFixed(1)}%</td>
                         {relevantSubjects.map(subj => {
                           const pct = examSubjMap?.get(subj.id)
                           return (
-                            <td key={subj.id} className="px-4 py-3 text-xs text-gray-400">
+                            <td key={subj.id} className="px-3 py-2.5 text-xs text-gray-400 whitespace-nowrap">
                               {pct !== undefined ? ordinal(pct) : '—'}
                             </td>
                           )
                         })}
-                        <td className="px-4 py-3 text-xs" style={{ color: isTop ? '#16A34A' : '#9ca3af' }}>
+                        <td className="px-3 py-2.5 text-xs whitespace-nowrap" style={{ color: isTop ? '#16A34A' : '#9ca3af' }}>
                           {top ? `${isTop ? '🏆 ' : ''}${top.pct.toFixed(1)}%` : '—'}
                         </td>
-                        <td className="px-4 py-3">
+                        <td className="px-3 py-2.5 whitespace-nowrap">
                           <span className="text-xs px-1.5 py-0.5 rounded font-medium"
                             style={passes ? { backgroundColor: 'rgba(34,197,94,0.1)', color: '#16A34A' } : { backgroundColor: 'rgba(239,68,68,0.1)', color: '#DC2626' }}>
                             {passes ? 'Pass' : 'Fail'}

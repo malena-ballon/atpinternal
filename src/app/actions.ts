@@ -182,7 +182,7 @@ export async function updateAvatar(formData: FormData): Promise<{ ok: boolean; u
   const file = formData.get('avatar') as File | null
   if (!file || file.size === 0) return { ok: false, error: 'No file provided' }
   if (!file.type.startsWith('image/')) return { ok: false, error: 'File must be an image' }
-  if (file.size > 2 * 1024 * 1024) return { ok: false, error: 'Image must be under 2 MB' }
+  if (file.size > 10 * 1024 * 1024) return { ok: false, error: 'Image must be under 5 MB' }
 
   const ext = file.name.split('.').pop()?.toLowerCase() ?? 'jpg'
   const path = `${user.id}/avatar.${ext}`
