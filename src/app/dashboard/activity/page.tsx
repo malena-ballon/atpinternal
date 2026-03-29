@@ -59,9 +59,16 @@ export default async function ActivityPage() {
   const svc = createServiceClient()
   const { data: logs } = await svc
     .from('activity_logs')
-    .select('id, user_name, user_role, action, entity_type, entity_id, entity_name, description, created_at')
+    .select('id, user_id, user_name, user_role, action, entity_type, entity_id, entity_name, description, created_at')
     .order('created_at', { ascending: false })
     .limit(500)
+
+  // Fetch avatar_url for every unique user who appears in the logs
+  const uniqueUserIds = [...new Set((logs ?? []).map(l => l.user_id).filter(Boolean))]
+  const { data: avatarRows } = uniqueUserIds.length
+    ? await svc.from('users').select('id, avatar_url').in('id', uniqueUserIds)
+    : { data: [] }
+  const avatarMap = new Map((avatarRows ?? []).map(r => [r.id, r.avatar_url as string | null]))
 
   return (
     <div className="space-y-5">
@@ -92,18 +99,24 @@ export default async function ActivityPage() {
                 const meta = getActionMeta(log.action)
                 const Icon = meta.icon
                 const { date, time } = formatDateTime(log.created_at)
+                const avatarUrl = log.user_id ? avatarMap.get(log.user_id) ?? null : null
+                const initials = log.user_name.split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase()
                 return (
                   <tr key={log.id} style={{ borderBottom: i < logs.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
 
                     {/* Teacher / User */}
                     <td className="px-4 py-3 whitespace-nowrap">
                       <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0"
+                        <div className="w-7 h-7 rounded-full overflow-hidden flex items-center justify-center text-xs font-bold shrink-0"
                           style={{
                             backgroundColor: log.user_role === 'admin' ? 'rgba(124,58,237,0.12)' : 'rgba(11,181,199,0.12)',
                             color: log.user_role === 'admin' ? '#7C3AED' : '#0BB5C7',
                           }}>
-                          {log.user_name.slice(0, 2).toUpperCase()}
+                          {avatarUrl
+                            // eslint-disable-next-line @next/next/no-img-element
+                            ? <img src={avatarUrl} alt={log.user_name} className="w-full h-full object-cover" />
+                            : initials
+                          }
                         </div>
                         <div>
                           <p className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>

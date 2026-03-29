@@ -5,7 +5,7 @@ export default function Loading() {
       <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
       
       {/* 2. Text is second (appears below) */}
-      <p className="text-lg font-small text-white-600 animate-pulse">waityyyyyy!!!</p>
+      <p className="text-lg font-medium animate-pulse" style={{ color: 'var(--color-text-primary)' }}>Loading...</p>
     </div>
   );
 }

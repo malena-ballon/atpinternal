@@ -15,6 +15,7 @@ import {
   Mail,
 } from 'lucide-react'
 import { signOut } from '@/app/actions'
+import AvatarUpload from './AvatarUpload'
 
 interface NavItemProps {
   href: string
@@ -54,16 +55,11 @@ function NavItem({ href, icon: Icon, label, badge, exact }: NavItemProps) {
 interface Props {
   name: string
   role: string
+  avatarUrl: string | null
   pendingCount?: number
 }
 
-export default function Sidebar({ name, role, pendingCount = 0 }: Props) {
-  const initials = name
-    .split(' ')
-    .map(w => w[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase()
+export default function Sidebar({ name, role, avatarUrl, pendingCount = 0 }: Props) {
 
   return (
     <aside
@@ -97,12 +93,7 @@ export default function Sidebar({ name, role, pendingCount = 0 }: Props) {
       {/* User profile */}
       <div className="px-4 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
         <div className="flex items-center gap-3">
-          <div
-            className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-white shrink-0"
-            style={{ backgroundColor: '#0BB5C7' }}
-          >
-            {initials}
-          </div>
+          <AvatarUpload name={name} avatarUrl={avatarUrl} size={36} />
           <div className="min-w-0">
             <p className="text-sm font-semibold truncate" style={{ color: '#FFFFFF' }}>
               {name}

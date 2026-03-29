@@ -3,6 +3,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { redirect } from 'next/navigation'
+import { revalidatePath } from 'next/cache'
 import { resend, FROM_EMAIL } from '@/utils/resend'
 import { sanitizeRichHtml } from '@/lib/sanitize'
 import { rateLimit } from '@/lib/rate-limit'
@@ -126,6 +127,37 @@ export async function sendTeacherInvite(teacherId: string): Promise<{ ok: boolea
     failedCount: 0,
   })
   return { ok: true }
+}
+
+// ── Avatar upload ──────────────────────────────────────────────────────────────
+export async function updateAvatar(formData: FormData): Promise<{ ok: boolean; url?: string; error?: string }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Not authenticated' }
+
+  const file = formData.get('avatar') as File | null
+  if (!file || file.size === 0) return { ok: false, error: 'No file provided' }
+  if (!file.type.startsWith('image/')) return { ok: false, error: 'File must be an image' }
+  if (file.size > 2 * 1024 * 1024) return { ok: false, error: 'Image must be under 2 MB' }
+
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? 'jpg'
+  const path = `${user.id}/avatar.${ext}`
+  const bytes = await file.arrayBuffer()
+
+  const { error: uploadError } = await supabase.storage
+    .from('avatars')
+    .upload(path, bytes, { contentType: file.type, upsert: true })
+  if (uploadError) return { ok: false, error: uploadError.message }
+
+  const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(path)
+  // Append version so CDN cache is busted after each new upload
+  const url = `${publicUrl}?v=${Date.now()}`
+
+  const { error: dbError } = await supabase.from('users').update({ avatar_url: url }).eq('id', user.id)
+  if (dbError) return { ok: false, error: dbError.message }
+
+  revalidatePath('/dashboard', 'layout')
+  return { ok: true, url }
 }
 
 // ── Public notes ───────────────────────────────────────────────────────────────

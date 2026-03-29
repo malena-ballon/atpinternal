@@ -436,11 +436,12 @@ function DuplicateClassModal({ cls, onClose, onDuplicated }: DuplicateModalProps
   const [copyExams, setCopyExams] = useState(true)
   const [copySessions, setCopySessions] = useState(true)
   const [loading, setLoading] = useState(false)
+  const [step, setStep] = useState('')
   const [error, setError] = useState('')
 
   async function handleDuplicate() {
     if (!name.trim()) { setError('Class name is required.'); return }
-    setLoading(true); setError('')
+    setLoading(true); setError(''); setStep('Fetching class data…')
     const supabase = createClient()
     try {
       // 1. Fetch original class data
@@ -453,6 +454,7 @@ function DuplicateClassModal({ cls, onClose, onDuplicated }: DuplicateModalProps
       ])
 
       // 2. Insert new class
+      setStep('Creating class…')
       const { data: newClass, error: classErr } = await supabase.from('classes').insert({
         name: name.trim(),
         description: origClass?.description ?? null,
@@ -467,6 +469,7 @@ function DuplicateClassModal({ cls, onClose, onDuplicated }: DuplicateModalProps
       const newClassId = newClass.id
 
       // 3. Copy subjects, build old→new ID map
+      setStep('Copying subjects…')
       const subjectIdMap = new Map<string, string>()
       if (origSubjects && origSubjects.length > 0) {
         const { data: newSubjects, error: subErr } = await supabase.from('subjects')
@@ -482,6 +485,7 @@ function DuplicateClassModal({ cls, onClose, onDuplicated }: DuplicateModalProps
       }
 
       // 4. Copy students (enroll same students)
+      if (copyStudents) setStep('Copying students…')
       if (copyStudents && origStudents && origStudents.length > 0) {
         const { error: stuErr } = await supabase.from('class_students')
           .insert(origStudents.map((s: { student_id: string }) => ({ class_id: newClassId, student_id: s.student_id })))
@@ -489,6 +493,7 @@ function DuplicateClassModal({ cls, onClose, onDuplicated }: DuplicateModalProps
       }
 
       // 5. Copy exams (remap subject_ids)
+      if (copyExams) setStep('Copying exams…')
       if (copyExams && origExams && origExams.length > 0) {
         const { error: examErr } = await supabase.from('exams').insert(origExams.map((e: Record<string, unknown>) => ({
           class_id: newClassId,
@@ -505,6 +510,7 @@ function DuplicateClassModal({ cls, onClose, onDuplicated }: DuplicateModalProps
       }
 
       // 6. Copy sessions (remap subject_ids)
+      if (copySessions) setStep('Copying sessions…')
       if (copySessions && origSessions && origSessions.length > 0) {
         const { error: sessErr } = await supabase.from('sessions').insert(origSessions.map((s: Record<string, unknown>) => ({
           class_id: newClassId,
@@ -594,7 +600,7 @@ function DuplicateClassModal({ cls, onClose, onDuplicated }: DuplicateModalProps
           <button onClick={handleDuplicate} disabled={loading}
             className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl text-white disabled:opacity-60"
             style={{ backgroundColor: '#0BB5C7' }}>
-            {loading ? <><Loader2 size={13} className="animate-spin" /> Duplicating…</> : <><Copy size={13} /> Duplicate</>}
+            {loading ? <><Loader2 size={13} className="animate-spin" /> {step || 'Duplicating…'}</> : <><Copy size={13} /> Duplicate</>}
           </button>
         </div>
       </div>

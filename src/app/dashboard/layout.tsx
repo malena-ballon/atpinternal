@@ -2,6 +2,7 @@ import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
 import { Bell, Search } from 'lucide-react'
 import Sidebar from './components/Sidebar'
+import AvatarUpload from './components/AvatarUpload'
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient()
@@ -10,7 +11,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   const { data: profile } = await supabase
     .from('users')
-    .select('name, status, role')
+    .select('name, status, role, avatar_url')
     .eq('id', user.id)
     .single()
 
@@ -21,19 +22,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
     .select('id', { count: 'exact', head: true })
     .eq('status', 'pending')
 
-  const initials = profile.name
-    .split(' ')
-    .map((w: string) => w[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase()
-
   return (
     <div className="flex min-h-screen" style={{ backgroundColor: 'var(--color-bg)' }}>
-      {/* Sidebar — client component owns all icons internally */}
       <Sidebar
         name={profile.name}
         role={profile.role}
+        avatarUrl={profile.avatar_url ?? null}
         pendingCount={pendingApprovals ?? 0}
       />
 
@@ -83,12 +77,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
             </div>
 
             {/* Avatar */}
-            <div
-              className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold text-white"
-              style={{ backgroundColor: '#0BB5C7' }}
-            >
-              {initials}
-            </div>
+            <AvatarUpload name={profile.name} avatarUrl={profile.avatar_url ?? null} size={36} />
           </div>
         </header>
 

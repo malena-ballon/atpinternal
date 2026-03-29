@@ -96,6 +96,7 @@ export default function PerformanceInsights({ className, classId, exams, subject
   const effectiveAtRisk = atRiskThreshold ?? classPassingPct
   const [allScores, setAllScores] = useState<ScoreRow[]>([])
   const [loading, setLoading] = useState(true)
+  const [fetchError, setFetchError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'overall' | 'student' | 'exam' | 'subject' | 'school'>('overall')
 
   useEffect(() => {
@@ -103,7 +104,11 @@ export default function PerformanceInsights({ className, classId, exams, subject
     createClient().from('scores')
       .select('id, exam_id, student_id, raw_score, total_items, percentage, created_at, subject_scores, students(name, email)')
       .in('exam_id', exams.map(e => e.id))
-      .then(({ data }) => { setAllScores((data ?? []) as unknown as ScoreRow[]); setLoading(false) })
+      .then(({ data, error }) => {
+        if (error) { setFetchError(error.message); setLoading(false); return }
+        setAllScores((data ?? []) as unknown as ScoreRow[])
+        setLoading(false)
+      })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exams])
 
@@ -232,6 +237,14 @@ export default function PerformanceInsights({ className, classId, exams, subject
       <div className="flex items-center justify-center py-12">
         <Loader2 size={18} className="animate-spin" style={{ color: '#0BB5C7' }} />
       </div>
+    )
+  }
+
+  if (fetchError) {
+    return (
+      <p className="py-8 text-center text-sm" style={{ color: 'var(--color-danger)' }}>
+        Failed to load scores: {fetchError}
+      </p>
     )
   }
 

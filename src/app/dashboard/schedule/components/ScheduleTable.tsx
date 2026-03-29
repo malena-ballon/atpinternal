@@ -9,6 +9,7 @@ import type { SessionRow, SessionStatus, ClassRow, TeacherRow, SubjectRow } from
 import StatusBadge from '@/app/dashboard/components/StatusBadge'
 import TimeInput from '@/app/dashboard/components/TimeInput'
 import RichTextEditor from '@/app/dashboard/components/RichTextEditor'
+import { sanitizeClientHtml } from '@/lib/sanitizeClient'
 
 interface Sel { r1: number; r2: number; c1: number; c2: number }
 
@@ -874,7 +875,7 @@ export default function ScheduleTable({
                         <td colSpan={10} className="px-4 pt-0 pb-3">
                           <div className="rounded-lg p-3 text-sm" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
                             <p className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--color-text-muted)' }}>Topic</p>
-                            <div className="rich-content text-sm" style={{ color: 'var(--color-text-primary)' }} dangerouslySetInnerHTML={{ __html: s.topic ?? '' }} />
+                            <div className="rich-content text-sm" style={{ color: 'var(--color-text-primary)' }} dangerouslySetInnerHTML={{ __html: sanitizeClientHtml(s.topic ?? '') }} />
                           </div>
                         </td>
                       </tr>

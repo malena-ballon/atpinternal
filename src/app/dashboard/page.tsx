@@ -2,8 +2,8 @@ import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
 import OverviewCards from './components/OverviewCards'
 import SessionsPerProgram from './components/SessionsPerProgram'
-import TodayAndUpcomingSessions from './components/TodayAndUpcomingSessions'
-import UpcomingSessionsCard from './components/UpcomingSessionsCard'
+import TodayAndUpcomingSessions, { type SessionRow as TodaySessionRow } from './components/TodayAndUpcomingSessions'
+import UpcomingSessionsCard, { type UpcomingSession } from './components/UpcomingSessionsCard'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -118,8 +118,8 @@ export default async function DashboardPage() {
       <div className="grid gap-6" style={{ gridTemplateColumns: '3fr 2fr' }}>
         <SessionsPerProgram programs={programs} />
         <div className="flex flex-col gap-6">
-          <TodayAndUpcomingSessions todaySessions={(todaySessions ?? []) as any} />
-          <UpcomingSessionsCard sessions={(upcomingSessions ?? []) as any} />
+          <TodayAndUpcomingSessions todaySessions={(todaySessions ?? []) as TodaySessionRow[]} />
+          <UpcomingSessionsCard sessions={(upcomingSessions ?? []) as UpcomingSession[]} />
         </div>
       </div>
     </div>

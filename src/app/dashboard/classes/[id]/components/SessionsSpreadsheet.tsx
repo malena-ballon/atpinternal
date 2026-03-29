@@ -10,6 +10,7 @@ import { sendReportEmails, logActivity } from '@/app/actions'
 import { createClient } from '@/utils/supabase/client'
 import type { SessionRow, SessionStatus, SubjectRow, TeacherRow, StudentRow } from '@/types'
 import ExportButton, { downloadBlob, pdfFileName } from './pdf/ExportButton'
+import { sanitizeClientHtml } from '@/lib/sanitizeClient'
 
 // ─── Mini MultiSelect (same pattern as master schedule) ───────────────────────
 interface MultiSelectProps {
@@ -1018,7 +1019,7 @@ export default function SessionsSpreadsheet({ classId, className, initialSession
                       {editMode
                         ? <RichTextEditor value={row.topic ?? ''} onChange={v => updateRow(row._key, { topic: v })} placeholder="Enter topic details…" />
                         : <div className="rounded-lg p-3" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
-                            <div className="rich-content" style={{ color: 'var(--color-text-primary)', fontSize: '13px' }} dangerouslySetInnerHTML={{ __html: row.topic ?? '' }} />
+                            <div className="rich-content" style={{ color: 'var(--color-text-primary)', fontSize: '13px' }} dangerouslySetInnerHTML={{ __html: sanitizeClientHtml(row.topic ?? '') }} />
                           </div>
                       }
                     </td>

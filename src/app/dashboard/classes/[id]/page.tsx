@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { ChevronRight } from 'lucide-react'
 import type { SubjectRow, SessionRow, TeacherRow, StudentRow, ExamRow, ClassRow } from '@/types'
 import ClassTabs from './components/ClassTabs'
+import { sanitizeRichHtml } from '@/lib/sanitize'
 
 export default async function ClassDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -29,6 +30,7 @@ export default async function ClassDetailPage({ params }: { params: Promise<{ id
   ])
 
   if (!cls) notFound()
+  if (cls.public_notes) cls.public_notes = sanitizeRichHtml(cls.public_notes)
 
   const students: StudentRow[] = (classStudentsData ?? []).map(cs => ({
     ...(cs.students as unknown as StudentRow),

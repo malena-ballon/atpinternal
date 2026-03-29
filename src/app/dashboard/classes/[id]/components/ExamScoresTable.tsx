@@ -140,7 +140,7 @@ export default function ExamScoresTable({ exam, classPassingPct, classId, classN
     let scores: string[]
     if (examSubjectIds.length > 1 && s.subject_scores?.length) {
       scores = examSubjectIds.map(subjId => {
-        const ss = s.subject_scores!.find(x => x.subject_id === subjId)
+        const ss = s.subject_scores?.find(x => x.subject_id === subjId)
         return ss ? `${ss.raw_score}/${ss.total_items}` : ''
       })
     } else {
