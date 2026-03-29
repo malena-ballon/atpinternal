@@ -2,6 +2,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { resend, FROM_EMAIL } from '@/utils/resend'
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#x27;')
+}
+
+function safeHttpsUrl(url: string | null | undefined): string | null {
+  if (!url) return null
+  try { const u = new URL(url); return u.protocol === 'https:' ? u.href : null } catch { return null }
+}
+
 // PH timezone offset in ms (UTC+8)
 const PH_OFFSET_MS = 8 * 60 * 60 * 1000
 
@@ -28,7 +37,7 @@ function sessionRows(sessions: SessionWithJoins[]): string {
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${s.subjects?.name ?? '—'}</td>
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${s.classes?.name ?? '—'}</td>
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">
-          ${s.zoom_link ? `<a href="${s.zoom_link}" style="color:#0BB5C7;">Join</a>` : '—'}
+          ${safeHttpsUrl(s.zoom_link) ? `<a href="${safeHttpsUrl(s.zoom_link)}" style="color:#0BB5C7;">Join</a>` : '—'}
         </td>
       </tr>`
     )
@@ -46,7 +55,7 @@ function buildEmail(teacherName: string, dateLabel: string, dateStr: string, ses
       <span style="color:#fff;font-size:18px;font-weight:700;">ATP Schedule Reminder</span>
     </div>
     <div style="padding:24px;">
-      <p style="margin:0 0 16px;color:#374151;">Hi <strong>${teacherName}</strong>,</p>
+      <p style="margin:0 0 16px;color:#374151;">Hi <strong>${escapeHtml(teacherName)}</strong>,</p>
       <p style="margin:0 0 20px;color:#374151;">Here are your sessions for <strong>${dateLabel} (${dateStr})</strong>:</p>
       <table style="width:100%;border-collapse:collapse;font-size:14px;">
         <thead>
@@ -82,7 +91,7 @@ export async function GET(req: NextRequest) {
   // Verify cron secret
   const auth = req.headers.get('authorization')
   const secret = process.env.CRON_SECRET
-  if (secret && auth !== `Bearer ${secret}`) {
+  if (!secret || auth !== `Bearer ${secret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

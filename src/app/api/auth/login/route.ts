@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
   const { data, error: authError } = await supabase.auth.signInWithPassword({ email, password })
 
   if (authError || !data.user) {
-    console.warn(`[auth/login] Failed attempt email=${email} ip=${ip} error=${authError?.message}`)
+    console.warn(`[auth/login] Failed attempt ip=${ip} error=${authError?.message}`)
     // Return a generic message — never reveal whether email exists
     return NextResponse.json(
       { error: 'Invalid email or password. Please try again.' },
@@ -102,7 +102,7 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  console.log(`[auth/login] Success userId=${data.user.id} ip=${ip} status=${profile.status}`)
+  console.log(`[auth/login] Success ip=${ip} status=${profile.status}`)
 
   // ── Build response with auth cookies ────────────────────────────────────────
   const res = NextResponse.json({ status: profile.status })

@@ -4,15 +4,21 @@ const securityHeaders = [
   // Prevent MIME-type sniffing
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   // Block page from being embedded in frames (clickjacking protection)
-  { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+  { key: 'X-Frame-Options', value: 'DENY' },
   // Enable browser XSS filter (legacy browsers)
   { key: 'X-XSS-Protection', value: '1; mode=block' },
   // Control referrer information
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-  // Enforce HTTPS for 1 year (enable once you have a stable HTTPS deployment)
-  { key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' },
+  // Enforce HTTPS for 2 years, include subdomains, allow preload
+  { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },
   // Restrict browser features
-  { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+  { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), payment=(), usb=()' },
+  // Prevent Adobe Flash / PDF cross-domain requests
+  { key: 'X-Permitted-Cross-Domain-Policies', value: 'none' },
+  // Isolate browsing context — mitigates Spectre/cross-origin attacks
+  { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
+  // Prevent other origins from loading this site's resources
+  { key: 'Cross-Origin-Resource-Policy', value: 'same-origin' },
   // Content Security Policy
   {
     key: 'Content-Security-Policy',

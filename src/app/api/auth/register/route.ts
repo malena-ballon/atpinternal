@@ -83,7 +83,7 @@ export async function POST(req: NextRequest) {
   })
 
   if (signUpError) {
-    console.warn(`[auth/register] signUp error email=${email} ip=${ip} error=${signUpError.message}`)
+    console.warn(`[auth/register] signUp error ip=${ip} error=${signUpError.message}`)
     return NextResponse.json({ error: signUpError.message }, { status: 400 })
   }
 
@@ -93,7 +93,7 @@ export async function POST(req: NextRequest) {
 
   // Email confirmation required — session will be null
   if (!data.session) {
-    console.log(`[auth/register] Confirmation email sent email=${email} ip=${ip}`)
+    console.log(`[auth/register] Confirmation email sent ip=${ip}`)
     const res = NextResponse.json({ needsConfirmation: true })
     for (const { name: n, value, options } of pendingCookies) {
       res.cookies.set(n, value, options as Parameters<typeof res.cookies.set>[2])

@@ -118,8 +118,8 @@ export default async function DashboardPage() {
       <div className="grid gap-6" style={{ gridTemplateColumns: '3fr 2fr' }}>
         <SessionsPerProgram programs={programs} />
         <div className="flex flex-col gap-6">
-          <TodayAndUpcomingSessions todaySessions={(todaySessions ?? []) as TodaySessionRow[]} />
-          <UpcomingSessionsCard sessions={(upcomingSessions ?? []) as UpcomingSession[]} />
+          <TodayAndUpcomingSessions todaySessions={(todaySessions ?? []) as unknown as TodaySessionRow[]} />
+          <UpcomingSessionsCard sessions={(upcomingSessions ?? []) as unknown as UpcomingSession[]} />
         </div>
       </div>
     </div>

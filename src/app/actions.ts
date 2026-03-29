@@ -8,6 +8,40 @@ import { resend, FROM_EMAIL } from '@/utils/resend'
 import { sanitizeRichHtml } from '@/lib/sanitize'
 import { rateLimit } from '@/lib/rate-limit'
 
+// ── Security helpers (server-only) ─────────────────────────────────────────────
+
+/** Require the calling user to be authenticated and hold the admin role.
+ *  Returns { ok: true, userId } on success or { ok: false, error } on failure. */
+async function requireAdmin(): Promise<{ ok: true; userId: string } | { ok: false; error: string }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Not authenticated' }
+  const { data: profile } = await supabase.from('users').select('role').eq('id', user.id).single()
+  if (profile?.role !== 'admin') return { ok: false, error: 'Forbidden' }
+  return { ok: true, userId: user.id }
+}
+
+/** Escape special HTML characters to prevent injection in email templates. */
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;')
+}
+
+/** Return the URL only if it uses the https: scheme — prevents javascript: injection in hrefs. */
+function safeHttpsUrl(url: string | null | undefined): string | null {
+  if (!url) return null
+  try {
+    const u = new URL(url)
+    return u.protocol === 'https:' ? u.href : null
+  } catch {
+    return null
+  }
+}
+
 export async function signOut() {
   const supabase = await createClient()
   await supabase.auth.signOut()
@@ -16,6 +50,8 @@ export async function signOut() {
 
 // ── Teacher approval ───────────────────────────────────────────────────────────
 export async function approveUser(userId: string): Promise<{ ok: boolean; error?: string }> {
+  const auth = await requireAdmin()
+  if (!auth.ok) return { ok: false, error: auth.error }
   const supabase = createServiceClient()
   const { data: u } = await supabase.from('users').select('name, email').eq('id', userId).single()
   if (!u) return { ok: false, error: 'User not found' }
@@ -32,6 +68,8 @@ export async function approveUser(userId: string): Promise<{ ok: boolean; error?
 }
 
 export async function rejectUser(userId: string): Promise<{ ok: boolean; error?: string }> {
+  const auth = await requireAdmin()
+  if (!auth.ok) return { ok: false, error: auth.error }
   const supabase = createServiceClient()
   const { error } = await supabase.from('users').update({ status: 'rejected' }).eq('id', userId)
   if (error) return { ok: false, error: error.message }
@@ -75,6 +113,8 @@ export async function ensureUserProfile(
 
 // ── Invite teacher ─────────────────────────────────────────────────────────────
 export async function sendTeacherInvite(teacherId: string): Promise<{ ok: boolean; error?: string }> {
+  const auth = await requireAdmin()
+  if (!auth.ok) return { ok: false, error: auth.error }
   const supabase = createServiceClient()
   const { data: teacher } = await supabase
     .from('teachers')
@@ -102,7 +142,7 @@ export async function sendTeacherInvite(teacherId: string): Promise<{ ok: boolea
     html: `
       <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;">
         <h2 style="color:#0A1045;margin:0 0 8px;">You've been invited!</h2>
-        <p style="color:#334155;margin:0 0 16px;">Hi ${teacher.name},</p>
+        <p style="color:#334155;margin:0 0 16px;">Hi ${escapeHtml(teacher.name)},</p>
         <p style="color:#334155;margin:0 0 16px;">You've been added as a teacher on the Acadgenius Tutorial Powerhouse internal platform. Click the button below to create your account — no approval needed.</p>
         <a href="${registerUrl}" style="display:inline-block;background:#0BB5C7;color:#0A1045;padding:12px 28px;border-radius:8px;font-weight:700;text-decoration:none;margin:4px 0 24px;">
           Create My Account
@@ -134,6 +174,10 @@ export async function updateAvatar(formData: FormData): Promise<{ ok: boolean; u
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { ok: false, error: 'Not authenticated' }
+
+  // Rate limit: 10 uploads per user per hour
+  const rl = rateLimit(`avatar:${user.id}`, { max: 10, windowMs: 60 * 60 * 1000 })
+  if (!rl.allowed) return { ok: false, error: 'Too many upload attempts. Please try again later.' }
 
   const file = formData.get('avatar') as File | null
   if (!file || file.size === 0) return { ok: false, error: 'No file provided' }
@@ -206,6 +250,8 @@ export async function saveTeacher(
   payload: { name: string; email: string; specialization: string | null; availability: unknown },
   teacherId?: string
 ): Promise<{ data: { id: string; user_id: string | null; name: string; specialization: string | null; email: string; availability: unknown } | null; error?: string }> {
+  const auth = await requireAdmin()
+  if (!auth.ok) return { data: null, error: auth.error }
   const supabase = createServiceClient()
   if (teacherId) {
     const { data, error } = await supabase
@@ -255,14 +301,17 @@ function fmtTime(t: string) {
 }
 
 function sessionTableRows(sessions: { date: string; start_time: string; end_time: string; subjects?: { name: string } | null; classes?: { name: string } | null; zoom_link?: string | null }[]): string {
-  return sessions.map(s => `
+  return sessions.map(s => {
+    const zoomLink = safeHttpsUrl(s.zoom_link)
+    return `
     <tr>
-      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${s.date}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${escapeHtml(s.date)}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${fmtTime(s.start_time)} – ${fmtTime(s.end_time)}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${s.subjects?.name ?? '—'}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${s.classes?.name ?? '—'}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${s.zoom_link ? `<a href="${s.zoom_link}" style="color:#0BB5C7;">Join</a>` : '—'}</td>
-    </tr>`).join('')
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${escapeHtml(s.subjects?.name ?? '—')}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${escapeHtml(s.classes?.name ?? '—')}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${zoomLink ? `<a href="${zoomLink}" style="color:#0BB5C7;">Join</a>` : '—'}</td>
+    </tr>`
+  }).join('')
 }
 
 // ── Send teacher session notification ─────────────────────────────────────────
@@ -299,7 +348,7 @@ export async function sendTeacherSessionEmail(sessionIds: string[]): Promise<{ s
       <span style="color:#fff;font-size:18px;font-weight:700;">New Sessions Assigned</span>
     </div>
     <div style="padding:24px;">
-      <p style="margin:0 0 16px;color:#374151;">Hi <strong>${teacher.name}</strong>,</p>
+      <p style="margin:0 0 16px;color:#374151;">Hi <strong>${escapeHtml(teacher.name)}</strong>,</p>
       <p style="margin:0 0 20px;color:#374151;">You have been assigned to the following session(s):</p>
       <table style="width:100%;border-collapse:collapse;font-size:14px;">
         <thead>
