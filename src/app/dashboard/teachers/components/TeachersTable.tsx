@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Plus, Search, Pencil, Trash2, X, Check, UserX, Users, UserCheck, Clock, Send, Loader2 } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 import type { TeacherRow } from '@/types'
-import type { TeacherWithStats, PendingUser } from '../page'
+import type { TeacherWithStats, PendingUser, AdminUser } from '../page'
 import TeacherFormModal from './TeacherFormModal'
 import { approveUser, rejectUser, sendTeacherInvite, logActivity } from '@/app/actions'
 
@@ -15,12 +15,13 @@ const DAY_ABBR: Record<string, string> = {
 }
 const DAYS_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
-type Tab = 'teachers' | 'pending' | 'invited'
+type Tab = 'teachers' | 'pending' | 'invited' | 'admins'
 
 interface Props {
   activeTeachers: TeacherWithStats[]
   pendingUsers: PendingUser[]
   invitedTeachers: TeacherWithStats[]
+  admins: AdminUser[]
   currentUserRole: 'admin' | 'teacher'
   currentTeacherId: string | null
 }
@@ -58,7 +59,7 @@ function AvailabilityTags({ teacher }: { teacher: TeacherRow }) {
   )
 }
 
-export default function TeachersTable({ activeTeachers, pendingUsers, invitedTeachers, currentUserRole, currentTeacherId }: Props) {
+export default function TeachersTable({ activeTeachers, pendingUsers, invitedTeachers, admins, currentUserRole, currentTeacherId }: Props) {
   const isAdmin = currentUserRole === 'admin'
   const router = useRouter()
   const [tab, setTab] = useState<Tab>('teachers')
@@ -160,6 +161,7 @@ export default function TeachersTable({ activeTeachers, pendingUsers, invitedTea
 
   const TABS: { id: Tab; label: string; icon: React.ReactNode; count: number; adminOnly?: boolean }[] = [
     { id: 'teachers', label: 'Teachers', icon: <UserCheck size={14} />, count: teachers.length },
+    { id: 'admins', label: 'Admins', icon: <Users size={14} />, count: admins.length },
     { id: 'pending', label: 'Pending', icon: <Clock size={14} />, count: pending.length, adminOnly: true },
     { id: 'invited', label: 'Invited', icon: <Users size={14} />, count: invited.length, adminOnly: true },
   ]
@@ -198,6 +200,56 @@ export default function TeachersTable({ activeTeachers, pendingUsers, invitedTea
         <p className="text-sm px-4 py-2 rounded-lg" style={{ backgroundColor: 'rgba(34,197,94,0.08)', color: '#16a34a' }}>
           Invite email sent successfully.
         </p>
+      )}
+
+      {/* ── ADMINS TAB ──────────────────────────────────────────────────────── */}
+      {tab === 'admins' && (
+        <div className="rounded-2xl overflow-hidden"
+          style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
+          {admins.length === 0 ? (
+            <p className="text-center py-16 text-sm" style={{ color: 'var(--color-text-muted)' }}>
+              No admins found.
+            </p>
+          ) : (
+            <table className="w-full">
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg)' }}>
+                  {['Name', 'Email', 'Member Since'].map(h => (
+                    <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider"
+                      style={{ color: 'var(--color-text-muted)' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {admins.map((u, i) => (
+                  <tr key={u.id} style={{ borderBottom: i < admins.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        {u.avatar_url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={u.avatar_url} alt={u.name} className="w-8 h-8 rounded-full object-cover shrink-0" />
+                        ) : (
+                          <Initials name={u.name} />
+                        )}
+                        <div>
+                          <span className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>{u.name}</span>
+                          <span className="ml-2 text-xs px-1.5 py-0.5 rounded font-medium"
+                            style={{ backgroundColor: 'rgba(168,85,247,0.1)', color: '#A855F7' }}>
+                            Admin
+                          </span>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-secondary)' }}>{u.email}</td>
+                    <td className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-muted)' }}>
+                      {new Date(u.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       )}
 
       {/* ── PENDING TAB ─────────────────────────────────────────────────────── */}
@@ -262,7 +314,7 @@ export default function TeachersTable({ activeTeachers, pendingUsers, invitedTea
       )}
 
       {/* ── TEACHERS / INVITED TABS ──────────────────────────────────────────── */}
-      {tab !== 'pending' && (
+      {tab !== 'pending' && tab !== 'admins' && (
         <>
           <div className="rounded-2xl p-4 flex items-center gap-3"
             style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>

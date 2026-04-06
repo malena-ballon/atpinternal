@@ -15,6 +15,14 @@ export interface PendingUser {
   created_at: string
 }
 
+export interface AdminUser {
+  id: string
+  name: string
+  email: string
+  created_at: string
+  avatar_url: string | null
+}
+
 export default async function TeachersPage() {
   const supabase = await createClient()
   const serviceClient = createServiceClient()
@@ -28,7 +36,7 @@ export default async function TeachersPage() {
   const currentUserRole = (currentUser?.role ?? 'teacher') as 'admin' | 'teacher'
   const currentTeacherId = currentTeacherRow?.id ?? null
 
-  const [{ data: teachers }, { data: sessions }, { data: pendingUsers }] = await Promise.all([
+  const [{ data: teachers }, { data: sessions }, { data: pendingUsers }, { data: adminUsers }] = await Promise.all([
     supabase
       .from('teachers')
       .select('id, user_id, name, specialization, email, availability')
@@ -42,6 +50,12 @@ export default async function TeachersPage() {
       .eq('status', 'pending')
       .eq('role', 'teacher')
       .order('created_at'),
+    serviceClient
+      .from('users')
+      .select('id, name, email, created_at, avatar_url')
+      .eq('role', 'admin')
+      .eq('status', 'active')
+      .order('name'),
   ])
 
   const statsMap = new Map<string, { upcoming: number; total: number }>()
@@ -62,19 +76,21 @@ export default async function TeachersPage() {
   const activeTeachers = allTeachers.filter(t => t.user_id != null)
   const invitedTeachers = allTeachers.filter(t => t.user_id == null)
   const pending = (pendingUsers ?? []) as PendingUser[]
+  const admins = (adminUsers ?? []) as AdminUser[]
 
   return (
     <div className="space-y-5">
       <div>
         <h1 className="text-2xl font-bold" style={{ color: 'var(--color-text-primary)' }}>Teachers</h1>
         <p className="text-sm mt-0.5" style={{ color: 'var(--color-text-secondary)' }}>
-          {activeTeachers.length} active · {pending.length} pending · {invitedTeachers.length} invited
+          {activeTeachers.length} active · {pending.length} pending · {invitedTeachers.length} invited · {admins.length} admin{admins.length !== 1 ? 's' : ''}
         </p>
       </div>
       <TeachersTable
         activeTeachers={activeTeachers}
         pendingUsers={pending}
         invitedTeachers={invitedTeachers}
+        admins={admins}
         currentUserRole={currentUserRole}
         currentTeacherId={currentTeacherId}
       />

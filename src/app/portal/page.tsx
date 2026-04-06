@@ -2,6 +2,8 @@ import Image from 'next/image'
 import { getPortalClasses, getPortalTheme } from '@/app/actions'
 import PortalClient from './PortalClient'
 
+export const dynamic = 'force-dynamic'
+
 export default async function StudentPortalPage() {
   const [classes, theme] = await Promise.all([getPortalClasses(), getPortalTheme()])
 
