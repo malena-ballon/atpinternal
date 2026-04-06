@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import { Plus, Search, X, ArrowUpDown, ChevronDown } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 import type { SessionRow, SessionStatus, ClassRow, TeacherRow, SubjectRow } from '@/types'
+import { getAdminUsers } from '@/app/actions'
 import ScheduleTable from './components/ScheduleTable'
 import BulkAddSessionModal from './components/BulkAddSessionModal'
 
@@ -153,15 +154,23 @@ function ScheduleContent() {
       supabase.from('classes').select('id, name, status, zoom_link, description, default_passing_pct, created_at, updated_at').eq('status', 'active'),
       supabase.from('teachers').select('id, user_id, name, specialization, email, availability'),
       supabase.from('subjects').select('id, name, class_id, created_at'),
-    ]).then(([{ data: s }, { data: c }, { data: t }, { data: sub }]) => {
+      getAdminUsers(),
+    ]).then(([{ data: s }, { data: c }, { data: t }, { data: sub }, admins]) => {
       const loadedSessions = (s ?? []) as unknown as SessionRow[]
       const loadedClasses = (c ?? []) as ClassRow[]
       const loadedTeachers = (t ?? []) as TeacherRow[]
       const loadedSubjects = (sub ?? []) as SubjectRow[]
 
+      // Merge admins who don't already have a teacher record
+      const teacherUserIds = new Set(loadedTeachers.map(t => t.user_id).filter(Boolean))
+      const adminTeachers: TeacherRow[] = (admins ?? [])
+        .filter(a => !teacherUserIds.has(a.id))
+        .map(a => ({ id: a.id, user_id: a.id, name: a.name, email: a.email, specialization: null, availability: null }))
+      const allTeachers = [...loadedTeachers, ...adminTeachers].sort((a, b) => a.name.localeCompare(b.name))
+
       setSessions(loadedSessions)
       setClasses(loadedClasses)
-      setTeachers(loadedTeachers)
+      setTeachers(allTeachers)
 
       // Build subjectsByClass map
       const subMap = new Map<string, SubjectRow[]>()
@@ -174,7 +183,7 @@ function ScheduleContent() {
 
       // Default: all options selected
       setFilterClasses(new Set(loadedClasses.map(c => c.id)))
-      setFilterTeachers(new Set(loadedTeachers.map(t => t.id)))
+      setFilterTeachers(new Set(allTeachers.map(t => t.id)))
       const subjectIds = new Set<string>()
       loadedSessions.forEach(s => {
         if (s.subject_ids?.length) s.subject_ids.forEach(id => subjectIds.add(id))

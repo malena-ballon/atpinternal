@@ -1,4 +1,5 @@
 import { createClient } from '@/utils/supabase/server'
+import { createServiceClient } from '@/utils/supabase/service'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { ChevronRight } from 'lucide-react'
@@ -9,8 +10,9 @@ import { sanitizeRichHtml } from '@/lib/sanitize'
 export default async function ClassDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const supabase = await createClient()
+  const serviceClient = createServiceClient()
 
-  const [{ data: cls }, { data: subjects }, { data: sessionsData }, { data: teachersData }, { data: classStudentsData }, { data: examsData }] = await Promise.all([
+  const [{ data: cls }, { data: subjects }, { data: sessionsData }, { data: teachersData }, { data: classStudentsData }, { data: examsData }, { data: adminUsers }] = await Promise.all([
     supabase.from('classes').select('*').eq('id', id).single(),
     supabase.from('subjects').select('id, name, class_id, created_at').eq('class_id', id).order('name'),
     supabase.from('sessions')
@@ -27,10 +29,19 @@ export default async function ClassDetailPage({ params }: { params: Promise<{ id
       .select('id, class_id, subject_id, subject_ids, name, date, total_items, passing_pct_override, created_at, updated_at, subjects(name)')
       .eq('class_id', id)
       .order('date', { ascending: false }),
+    serviceClient.from('users').select('id, name, email').eq('role', 'admin').eq('status', 'active'),
   ])
 
   if (!cls) notFound()
   if (cls.public_notes) cls.public_notes = sanitizeRichHtml(cls.public_notes)
+
+  // Merge admins who don't already have a teacher record
+  const baseTeachers = (teachersData ?? []) as TeacherRow[]
+  const teacherUserIds = new Set(baseTeachers.map(t => t.user_id).filter(Boolean))
+  const adminTeachers: TeacherRow[] = (adminUsers ?? [])
+    .filter(a => !teacherUserIds.has(a.id))
+    .map(a => ({ id: a.id, user_id: a.id, name: a.name, email: a.email, specialization: null, availability: null }))
+  const allTeachers = [...baseTeachers, ...adminTeachers].sort((a, b) => a.name.localeCompare(b.name))
 
   const students: StudentRow[] = (classStudentsData ?? []).map(cs => ({
     ...(cs.students as unknown as StudentRow),
@@ -50,7 +61,7 @@ export default async function ClassDetailPage({ params }: { params: Promise<{ id
         cls={cls as unknown as ClassRow}
         subjects={(subjects ?? []) as SubjectRow[]}
         sessionsData={(sessionsData ?? []) as unknown as SessionRow[]}
-        teachersData={(teachersData ?? []) as TeacherRow[]}
+        teachersData={allTeachers}
         students={students}
         examsData={(examsData ?? []) as unknown as ExamRow[]}
       />

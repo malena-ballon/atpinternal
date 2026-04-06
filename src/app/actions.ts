@@ -972,6 +972,18 @@ export async function sendStudentAccessCodes(
   return { sent, failed }
 }
 
+// ── Admin users (for teacher dropdowns) ────────────────────────────────────────
+export async function getAdminUsers(): Promise<{ id: string; name: string; email: string }[]> {
+  const supabase = createServiceClient()
+  const { data } = await supabase
+    .from('users')
+    .select('id, name, email')
+    .eq('role', 'admin')
+    .eq('status', 'active')
+    .order('name')
+  return data ?? []
+}
+
 // ── Public portal data (no auth required, uses service client) ─────────────────
 
 export async function getPortalClasses(): Promise<{ id: string; name: string }[]> {
