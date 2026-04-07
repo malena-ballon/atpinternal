@@ -48,8 +48,17 @@ export default function SubjectAverages({ classes, subjects, exams, scores }: Pr
   function selectAll() { setSelectedClasses(new Set(classes.map(c => c.id))) }
   function selectNone() { setSelectedClasses(new Set()) }
 
-  // Build a map: examId → Set of subjectIds
-  const examSubjectMap = useMemo(() => {
+  // subjectId → name (for all subjects in selected classes)
+  const subjectIdToName = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const s of subjects) {
+      if (selectedClasses.has(s.class_id)) map.set(s.id, s.name)
+    }
+    return map
+  }, [subjects, selectedClasses])
+
+  // examId → list of subjectIds it belongs to (only for selected classes)
+  const examSubjectIds = useMemo(() => {
     const map = new Map<string, string[]>()
     for (const exam of exams) {
       if (!selectedClasses.has(exam.class_id)) continue
@@ -59,38 +68,54 @@ export default function SubjectAverages({ classes, subjects, exams, scores }: Pr
     return map
   }, [exams, selectedClasses])
 
-  // scoresByExam map for quick lookup
+  // scoresByExam (only for included exams)
   const scoresByExam = useMemo(() => {
     const map = new Map<string, number[]>()
     for (const s of scores) {
-      if (!examSubjectMap.has(s.exam_id)) continue
+      if (!examSubjectIds.has(s.exam_id)) continue
       if (!map.has(s.exam_id)) map.set(s.exam_id, [])
       map.get(s.exam_id)!.push(s.percentage)
     }
     return map
-  }, [scores, examSubjectMap])
+  }, [scores, examSubjectIds])
 
-  // Compute per-subject averages
+  // Group by SUBJECT NAME (case-insensitive trim) — merge same-named subjects across classes
   const subjectStats = useMemo(() => {
-    // Only subjects belonging to selected classes
-    const filteredSubjects = subjects.filter(s => selectedClasses.has(s.class_id))
+    // name (lowercase) → { displayName, allPcts }
+    const grouped = new Map<string, { displayName: string; allPcts: number[]; classNames: Set<string> }>()
 
-    return filteredSubjects.map(subject => {
-      const allPcts: number[] = []
-      for (const [examId, subIds] of examSubjectMap.entries()) {
-        if (!subIds.includes(subject.id)) continue
-        const pcts = scoresByExam.get(examId) ?? []
-        allPcts.push(...pcts)
+    for (const [examId, subIds] of examSubjectIds.entries()) {
+      const exam = exams.find(e => e.id === examId)
+      if (!exam) continue
+      const cls = classes.find(c => c.id === exam.class_id)
+      const pcts = scoresByExam.get(examId) ?? []
+      if (pcts.length === 0) continue
+
+      for (const subId of subIds) {
+        const name = subjectIdToName.get(subId)
+        if (!name) continue
+        const key = name.trim().toLowerCase()
+        if (!grouped.has(key)) {
+          grouped.set(key, { displayName: name.trim(), allPcts: [], classNames: new Set() })
+        }
+        const entry = grouped.get(key)!
+        entry.allPcts.push(...pcts)
+        if (cls) entry.classNames.add(cls.name)
       }
-      const avg = allPcts.length > 0 ? allPcts.reduce((s, v) => s + v, 0) / allPcts.length : null
-      const cls = classes.find(c => c.id === subject.class_id)
-      return { subject, avg, scoreCount: allPcts.length, className: cls?.name ?? '' }
-    })
+    }
+
+    return Array.from(grouped.values())
+      .map(({ displayName, allPcts, classNames }) => ({
+        name: displayName,
+        avg: allPcts.length > 0 ? allPcts.reduce((s, v) => s + v, 0) / allPcts.length : null,
+        scoreCount: allPcts.length,
+        classCount: classNames.size,
+        classNames: Array.from(classNames).sort().join(', '),
+      }))
       .filter(s => s.avg !== null)
       .sort((a, b) => (b.avg ?? 0) - (a.avg ?? 0))
-  }, [subjects, examSubjectMap, scoresByExam, selectedClasses, classes])
+  }, [examSubjectIds, exams, classes, scoresByExam, subjectIdToName])
 
-  const allSelected = selectedClasses.size === classes.length
   const noneSelected = selectedClasses.size === 0
 
   if (classes.length === 0 || subjects.length === 0) return null
@@ -112,6 +137,7 @@ export default function SubjectAverages({ classes, subjects, exams, scores }: Pr
               : selectedClasses.size === 0
                 ? 'No classes selected'
                 : `${selectedClasses.size} of ${classes.length} classes`}
+            {subjectStats.length > 0 && ` · ${subjectStats.length} subject${subjectStats.length !== 1 ? 's' : ''}`}
           </p>
         </div>
 
@@ -135,7 +161,7 @@ export default function SubjectAverages({ classes, subjects, exams, scores }: Pr
               className="absolute right-0 top-full mt-1 z-30 rounded-xl overflow-hidden"
               style={{
                 minWidth: '200px',
-                maxWidth: '260px',
+                maxWidth: '280px',
                 backgroundColor: 'var(--color-surface)',
                 border: '1px solid var(--color-border)',
                 boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
@@ -192,22 +218,22 @@ export default function SubjectAverages({ classes, subjects, exams, scores }: Pr
           </p>
         ) : subjectStats.length === 0 ? (
           <p className="text-sm text-center py-4" style={{ color: 'var(--color-text-muted)' }}>
-            No score data found for selected classes.
+            No score data found for the selected classes.
           </p>
         ) : (
-          <div className="space-y-3">
-            {subjectStats.map(({ subject, avg, scoreCount, className }) => {
+          <div className="space-y-3.5">
+            {subjectStats.map(({ name, avg, scoreCount, classCount, classNames }) => {
               const pct = avg ?? 0
               const barColor = pct >= 85 ? '#22c55e' : pct >= 70 ? '#0BB5C7' : pct >= 60 ? '#f59e0b' : '#ef4444'
               return (
-                <div key={subject.id}>
+                <div key={name}>
                   <div className="flex items-center justify-between mb-1">
                     <div className="min-w-0 flex-1 mr-3">
                       <span className="text-sm font-medium truncate block" style={{ color: 'var(--color-text-primary)' }}>
-                        {subject.name}
+                        {name}
                       </span>
                       <span className="text-xs truncate block" style={{ color: 'var(--color-text-muted)' }}>
-                        {className} · {scoreCount} score{scoreCount !== 1 ? 's' : ''}
+                        {classCount === 1 ? classNames : `${classCount} classes`} · {scoreCount} score{scoreCount !== 1 ? 's' : ''}
                       </span>
                     </div>
                     <span className="text-sm font-bold flex-shrink-0" style={{ color: barColor }}>

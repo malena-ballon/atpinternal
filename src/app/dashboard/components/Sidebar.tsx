@@ -127,9 +127,9 @@ export default function Sidebar({ name, role, avatarUrl, pendingCount = 0 }: Pro
         }}
       >
         {collapsed ? (
-          <button onClick={toggle} title="Expand sidebar" className="flex items-center justify-center">
+          <div className="flex items-center justify-center">
             <Image src="/logo.jpg" alt="ATP" width={28} height={28} className="rounded-lg" />
-          </button>
+          </div>
         ) : (
           <Link href="/dashboard" className="flex items-center gap-2.5 flex-1 min-w-0">
             <Image src="/logo.jpg" alt="Acadgenius Tutorial Powerhouse" width={32} height={32} className="rounded-lg flex-shrink-0" />
@@ -142,16 +142,6 @@ export default function Sidebar({ name, role, avatarUrl, pendingCount = 0 }: Pro
               </span>
             </div>
           </Link>
-        )}
-        {!collapsed && (
-          <button
-            onClick={toggle}
-            title="Collapse sidebar"
-            className="ml-2 flex items-center justify-center w-6 h-6 rounded-lg transition-all hover:bg-white/10 flex-shrink-0"
-            style={{ color: 'rgba(255,255,255,0.45)' }}
-          >
-            <ChevronLeft size={14} />
-          </button>
         )}
       </div>
 
@@ -190,22 +180,23 @@ export default function Sidebar({ name, role, avatarUrl, pendingCount = 0 }: Pro
         )}
       </nav>
 
-      {/* Expand button when collapsed */}
-      {collapsed && (
-        <div className="px-2 pb-2">
-          <button
-            onClick={toggle}
-            title="Expand sidebar"
-            className="flex items-center justify-center w-full py-2 rounded-xl transition-all hover:bg-white/10"
-            style={{ color: 'rgba(255,255,255,0.45)' }}
-          >
-            <ChevronRight size={16} />
-          </button>
-        </div>
-      )}
+      {/* Collapse / Expand toggle + Sign out */}
+      <div className="px-2 pb-4 space-y-0.5" style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '12px' }}>
+        {/* Collapse/Expand button */}
+        <button
+          onClick={toggle}
+          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          className="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl transition-all hover:bg-white/10 text-sm font-medium"
+          style={{
+            color: 'rgba(255,255,255,0.55)',
+            justifyContent: collapsed ? 'center' : undefined,
+          }}
+        >
+          {collapsed ? <ChevronRight size={18} style={{ flexShrink: 0 }} /> : <ChevronLeft size={18} style={{ flexShrink: 0 }} />}
+          {!collapsed && <span>Collapse Sidebar</span>}
+        </button>
 
-      {/* Sign out */}
-      <div className="px-2 pb-4" style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '12px' }}>
+        {/* Sign out */}
         <form action={signOut}>
           <button
             type="submit"

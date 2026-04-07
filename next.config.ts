@@ -26,10 +26,11 @@ const securityHeaders = [
       "default-src 'self'",
       // Next.js requires unsafe-inline for styles; tighten with nonces in future
       "style-src 'self' 'unsafe-inline'",
-      // Next.js hydration + TipTap require unsafe-eval in dev; restrict in prod via env
+      // Next.js hydration + TipTap require unsafe-eval in dev.
+      // wasm-unsafe-eval is required in both envs for @react-pdf/renderer (WebAssembly font rendering).
       process.env.NODE_ENV === 'development'
-        ? "script-src 'self' 'unsafe-eval' 'unsafe-inline'"
-        : "script-src 'self' 'unsafe-inline'",
+        ? "script-src 'self' 'unsafe-eval' 'unsafe-inline' 'wasm-unsafe-eval'"
+        : "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
       // Supabase API + Resend image tracking
       `connect-src 'self' ${process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''} https://*.supabase.co wss://*.supabase.co`,
       "img-src 'self' data: blob: https:",
