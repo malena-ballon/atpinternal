@@ -4,6 +4,7 @@ import OverviewCards from './components/OverviewCards'
 import SessionsPerProgram from './components/SessionsPerProgram'
 import TodayAndUpcomingSessions, { type SessionRow as TodaySessionRow } from './components/TodayAndUpcomingSessions'
 import UpcomingSessionsCard, { type UpcomingSession } from './components/UpcomingSessionsCard'
+import SubjectAverages, { type SubjectAvgClass, type SubjectAvgSubject, type SubjectAvgExam, type SubjectAvgScore } from './components/SubjectAverages'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -35,6 +36,10 @@ export default async function DashboardPage() {
     { data: programsData },
     { data: todaySessions },
     { data: upcomingSessions },
+    { data: activeClassesData },
+    { data: subjectsData },
+    { data: examsData },
+    { data: scoresData },
   ] = await Promise.all([
     supabase.from('sessions').select('id', { count: 'exact', head: true }),
     supabase.from('sessions')
@@ -67,6 +72,10 @@ export default async function DashboardPage() {
       .order('date')
       .order('start_time')
       .limit(3),
+    supabase.from('classes').select('id, name').eq('status', 'active').order('name'),
+    supabase.from('subjects').select('id, name, class_id'),
+    supabase.from('exams').select('id, class_id, subject_id, subject_ids'),
+    supabase.from('scores').select('exam_id, percentage'),
   ])
 
   const enrolledStudents = new Set(enrollmentData?.map(e => e.student_id) ?? []).size
@@ -122,6 +131,14 @@ export default async function DashboardPage() {
           <UpcomingSessionsCard sessions={(upcomingSessions ?? []) as unknown as UpcomingSession[]} />
         </div>
       </div>
+
+      {/* Per-subject average across classes */}
+      <SubjectAverages
+        classes={(activeClassesData ?? []) as SubjectAvgClass[]}
+        subjects={(subjectsData ?? []) as SubjectAvgSubject[]}
+        exams={(examsData ?? []) as SubjectAvgExam[]}
+        scores={(scoresData ?? []) as SubjectAvgScore[]}
+      />
     </div>
   )
 }

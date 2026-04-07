@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { Loader2 } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 import type { ExamRow, ScoreRow, StudentRow, ScoreBracket, SubjectRow } from '@/types'
 import { DEFAULT_BRACKETS } from '@/types'
@@ -236,8 +235,31 @@ export default function PerformanceInsights({ className, classId, exams, subject
   // ── Render ─────────────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 size={18} className="animate-spin" style={{ color: '#0BB5C7' }} />
+      <div className="space-y-5">
+        {/* Tab bar skeleton */}
+        <div className="flex gap-1 p-1 rounded-xl" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="h-8 rounded-lg animate-pulse flex-1" style={{ backgroundColor: 'var(--color-border)' }} />
+          ))}
+        </div>
+        {/* Cards skeleton */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="rounded-2xl p-5 space-y-3 animate-pulse" style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
+              <div className="h-3 w-20 rounded" style={{ backgroundColor: 'var(--color-border)' }} />
+              <div className="h-7 w-14 rounded-xl" style={{ backgroundColor: 'var(--color-border)' }} />
+            </div>
+          ))}
+        </div>
+        {/* Chart skeleton */}
+        <div className="rounded-2xl p-6 animate-pulse" style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', height: '240px' }}>
+          <div className="h-5 w-40 rounded-lg mb-4" style={{ backgroundColor: 'var(--color-border)' }} />
+          <div className="flex items-end gap-2 h-36">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="flex-1 rounded-t-lg" style={{ backgroundColor: 'var(--color-border)', height: `${30 + Math.round(Math.sin(i) * 20 + 50)}%` }} />
+            ))}
+          </div>
+        </div>
       </div>
     )
   }

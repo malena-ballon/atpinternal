@@ -2,6 +2,7 @@ import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
 import { Bell, Search } from 'lucide-react'
 import Sidebar from './components/Sidebar'
+import MainArea from './components/MainArea'
 import AvatarUpload from './components/AvatarUpload'
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -32,7 +33,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       />
 
       {/* ── Main area ───────────────────────────────────────────── */}
-      <div className="flex flex-col flex-1" style={{ marginLeft: '240px', minHeight: '100vh' }}>
+      <MainArea>
         {/* Top header */}
         <header
           className="sticky top-0 z-10 flex items-center gap-4 px-8"
@@ -83,7 +84,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
         {/* Page content */}
         <main className="flex-1 p-8">{children}</main>
-      </div>
+      </MainArea>
     </div>
   )
 }

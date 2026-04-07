@@ -555,18 +555,41 @@ export async function sendReportEmails(
 
   for (const r of recipients) {
     try {
-      const html = `
-<div style="font-family:system-ui,sans-serif;padding:24px;max-width:540px;margin:0 auto;">
-  <div style="background:#0BB5C7;padding:16px 20px;border-radius:8px 8px 0 0;">
-    <span style="color:#fff;font-size:16px;font-weight:700;">Report</span>
+      const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
+      const html = `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:system-ui,-apple-system,sans-serif;">
+<div style="max-width:560px;margin:0 auto;padding:24px 16px;">
+  <!-- Card -->
+  <div style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+    <!-- Header -->
+    <div style="background:#0A1045;padding:20px 24px;display:flex;align-items:center;gap:14px;">
+      <img src="${appUrl}/logo.jpg" alt="Acadgenius Logo" width="40" height="40" style="border-radius:8px;display:block;flex-shrink:0;" />
+      <div>
+        <div style="color:#ffffff;font-size:17px;font-weight:700;line-height:1.2;">Acadgenius Tutorial Powerhouse</div>
+        <div style="color:rgba(255,255,255,0.6);font-size:12px;margin-top:2px;">Student Performance Report</div>
+      </div>
+    </div>
+    <!-- Body -->
+    <div style="padding:24px;">
+      <p style="margin:0 0 14px;color:#374151;font-size:15px;">Hi <strong>${esc(r.name)}</strong>,</p>
+      <p style="margin:0 0 16px;color:#374151;font-size:14px;line-height:1.6;white-space:pre-wrap;">${esc(body)}</p>
+      ${signature ? `<hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;"/><p style="margin:0;font-size:12px;color:#6b7280;white-space:pre-wrap;">${esc(signature)}</p>` : ''}
+    </div>
+    <!-- Footer -->
+    <div style="background:#f8fafc;border-top:1px solid #e5e7eb;padding:16px 24px;text-align:center;">
+      <p style="margin:0 0 4px;font-size:13px;font-weight:600;color:#0A1045;">Acadgenius Tutorial Powerhouse</p>
+      <p style="margin:0 0 4px;font-size:11px;color:#6b7280;">Unit 3F-Vir.67, Symphony Tower 2, Sgt. Esguerra Avenue, Brgy. South Triangle, Quezon City, Philippines, 1101</p>
+      <p style="margin:0;font-size:11px;color:#6b7280;">
+        <a href="mailto:mdcaranzo@acadgenius.org" style="color:#0BB5C7;text-decoration:none;">mdcaranzo@acadgenius.org</a>
+        &nbsp;·&nbsp;0905 357 3037
+      </p>
+    </div>
   </div>
-  <div style="padding:20px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;">
-    <p style="margin:0 0 12px;color:#374151;">Hi <strong>${esc(r.name)}</strong>,</p>
-    <p style="margin:0 0 16px;color:#374151;white-space:pre-wrap;">${esc(body)}</p>
-    ${signature ? `<hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;"/><p style="margin:0;font-size:12px;color:#6b7280;white-space:pre-wrap;">${esc(signature)}</p>` : ''}
-    <p style="margin:16px 0 0;font-size:11px;color:#9ca3af;">Sent by Acadgenius Tutorial Powerhouse.</p>
-  </div>
-</div>`
+</div>
+</body>
+</html>`
       const pdfAttachments = r.pdfs.map(p => ({
         filename: p.filename,
         content: Buffer.from(p.base64, 'base64'),
