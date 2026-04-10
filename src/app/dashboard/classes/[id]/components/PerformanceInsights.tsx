@@ -9,7 +9,6 @@ import PerStudentTab from './insights/PerStudentTab'
 import PerExamTab from './insights/PerExamTab'
 import PerSchoolTab from './insights/PerSchoolTab'
 import PerSubjectTab from './insights/PerSubjectTab'
-import BadgesTab from './insights/BadgesTab'
 
 // ── Shared math helpers ──────────────────────────────────────────────────────
 export function calcMean(arr: number[]): number {
@@ -88,7 +87,6 @@ const TABS = [
   { id: 'exam' as const, label: 'Per Exam' },
   { id: 'subject' as const, label: 'Per Subject' },
   { id: 'school' as const, label: 'Per School' },
-  { id: 'badges' as const, label: '🏆 Badges', beta: true },
 ]
 
 
@@ -98,7 +96,7 @@ export default function PerformanceInsights({ className, classId, exams, subject
   const [allScores, setAllScores] = useState<ScoreRow[]>([])
   const [loading, setLoading] = useState(true)
   const [fetchError, setFetchError] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<'overall' | 'student' | 'exam' | 'subject' | 'school' | 'badges'>('overall')
+  const [activeTab, setActiveTab] = useState<'overall' | 'student' | 'exam' | 'subject' | 'school'>('overall')
 
   useEffect(() => {
     if (exams.length === 0) { setLoading(false); return }
@@ -238,7 +236,7 @@ export default function PerformanceInsights({ className, classId, exams, subject
       <div className="space-y-5">
         {/* Tab bar skeleton */}
         <div className="flex gap-1 p-1 rounded-xl" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
-          {Array.from({ length: 6 }).map((_, i) => (
+          {Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="h-8 rounded-lg animate-pulse flex-1" style={{ backgroundColor: 'var(--color-border)' }} />
           ))}
         </div>
@@ -295,17 +293,6 @@ export default function PerformanceInsights({ className, classId, exams, subject
                 : { color: 'var(--color-text-muted)' }}
             >
               {t.label}
-              {'beta' in t && t.beta && (
-                <span
-                  className="text-[9px] font-bold px-1 py-0.5 rounded leading-none"
-                  style={{
-                    backgroundColor: activeTab === t.id ? 'rgba(255,255,255,0.25)' : '#F59E0B22',
-                    color: activeTab === t.id ? '#fff' : '#F59E0B',
-                  }}
-                >
-                  BETA
-                </span>
-              )}
             </button>
           ))}
         </div>
@@ -353,14 +340,6 @@ export default function PerformanceInsights({ className, classId, exams, subject
       )}
       {activeTab === 'school' && (
         <PerSchoolTab className={className} schoolStats={schoolStats} sortedExams={sortedExams} />
-      )}
-      {activeTab === 'badges' && (
-        <BadgesTab
-          className={className}
-          examStats={examStats}
-          studentStats={studentStats}
-          classPassingPct={classPassingPct}
-        />
       )}
     </div>
   )
